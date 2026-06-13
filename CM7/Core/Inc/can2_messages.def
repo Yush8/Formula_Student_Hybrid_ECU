@@ -1,0 +1,17 @@
+/* =====================================================================
+ *  FDCAN2 (tractive system / inverter bus) - RECEIVED message list.
+ *
+ *  Same rules as can1_messages.def:
+ *
+ *        CAN_MSG( SLOT_NAME , 0xID )
+ *
+ *  one line each, no trailing comma, no backslashes.
+ *
+ *  No live messages yet. To add one, copy a line out of the example
+ *  comment below, remove the comment, rename it and set the real id.
+ * ===================================================================== */
+
+/* --- Examples: copy a line out of this comment, rename it, set the id ---
+CAN_MSG(CAN2_INV_L_STATUS, 0x0A0)
+CAN_MSG(CAN2_INV_R_STATUS, 0x0A1)
+------------------------------------------------------------------------- */

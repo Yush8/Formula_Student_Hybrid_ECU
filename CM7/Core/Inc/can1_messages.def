@@ -1,0 +1,23 @@
+/* =====================================================================
+ *  FDCAN1 (dash / ECU bus) - RECEIVED message list.
+ *
+ *  THIS IS ONE OF THE TWO FILES YOU EDIT TO ADD A CAN ID.
+ *
+ *  One line per message you want to receive:
+ *
+ *        CAN_MSG( SLOT_NAME , 0xID )
+ *
+ *    - SLOT_NAME : any unique name (you'll reuse it in model_bridge.c).
+ *    - 0xID      : the 11-bit standard CAN identifier.
+ *
+ *  Rules: one line each, NO trailing comma, NO backslashes. Add or delete
+ *  lines freely - the enum, routing table and buffers all rebuild from this
+ *  list automatically, so nothing can ever get out of sync.
+ * ===================================================================== */
+
+CAN_MSG(CAN1_TEST, 0x200)
+
+/* --- Examples: copy a line out of this comment, rename it, set the id ---
+CAN_MSG(CAN1_DASH_STATUS, 0x100)
+CAN_MSG(CAN1_ECU_RPM,     0x101)
+------------------------------------------------------------------------- */

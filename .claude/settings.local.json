@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk '/^SUBDIRS/{f=1} f{print} /^$/{if\\(f\\)exit}' Debug/sources.mk)",
+      "Bash(awk '/<link>/{inlink=1} inlink&&/<name>/{gsub\\(/.*<name>|<\\\\/name>.*/,\"\"\\);n=$0} inlink&&/<type>/{gsub\\(/.*<type>|<\\\\/type>.*/,\"\"\\);t=$0} inlink&&/<\\\\/link>/{printf \"type=%s  %s\\\\n\",t,n; inlink=0}' .project)",
+      "Bash(awk '/<link>/{inlink=1} inlink&&/<name>/{gsub\\(/.*<name>|<\\\\/name>.*/,\"\"\\);n=$0} inlink&&/<type>/{gsub\\(/.*<type>|<\\\\/type>.*/,\"\"\\);t=$0} inlink&&/<locationURI>/{gsub\\(/.*<locationURI>|<\\\\/locationURI>.*/,\"\"\\);u=$0} inlink&&/<\\\\/link>/{if\\(n ~ /Drivers|Middlewares/\\) printf \"type=%s %-55s -> %s\\\\n\",t,n,u; inlink=0}' CM4/.project)",
+      "Bash(xargs -n1 basename)",
+      "Bash(awk 'NR>=4 && NR<=20' .project)",
+      "Bash(head -n 36 .project)",
+      "Bash(printf '\\\\t\\\\t\\\\t<link>\\\\n\\\\t\\\\t\\\\t\\\\t<name>Drivers/STM32H7xx_HAL_Driver/Src</name>\\\\n\\\\t\\\\t\\\\t\\\\t<type>2</type>\\\\n\\\\t\\\\t\\\\t\\\\t<locationURI>PARENT-1-PROJECT_LOC/Drivers/STM32H7xx_HAL_Driver/Src</locationURI>\\\\n\\\\t\\\\t\\\\t</link>\\\\n')",
+      "Bash(printf '\\\\t\\\\t\\\\t<link>\\\\n\\\\t\\\\t\\\\t\\\\t<name>Middlewares/ST/STM32_USB_Device_Library/Core/Src</name>\\\\n\\\\t\\\\t\\\\t\\\\t<type>2</type>\\\\n\\\\t\\\\t\\\\t\\\\t<locationURI>PARENT-1-PROJECT_LOC/Middlewares/ST/STM32_USB_Device_Library/Core/Src</locationURI>\\\\n\\\\t\\\\t\\\\t</link>\\\\n')",
+      "Bash(printf '\\\\t\\\\t\\\\t<link>\\\\n\\\\t\\\\t\\\\t\\\\t<name>Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Src</name>\\\\n\\\\t\\\\t\\\\t\\\\t<type>2</type>\\\\n\\\\t\\\\t\\\\t\\\\t<locationURI>PARENT-1-PROJECT_LOC/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Src</locationURI>\\\\n\\\\t\\\\t\\\\t</link>\\\\n')",
+      "Bash(tail -n +227 .project)",
+      "Bash(python -c \"import xml.dom.minidom,sys; xml.dom.minidom.parse\\('.project'\\); print\\('XML OK: well-formed'\\)\")",
+      "Bash(python3 -c \"import xml.dom.minidom; xml.dom.minidom.parse\\('.project'\\); print\\('XML OK: well-formed'\\)\")",
+      "Bash(awk '/<link>/{i=1} i&&/<name>/{gsub\\(/.*<name>|<\\\\/name>.*/,\"\"\\);n=$0} i&&/<type>/{gsub\\(/.*<type>|<\\\\/type>.*/,\"\"\\);t=$0} i&&/<\\\\/link>/{printf \"type=%s  %s\\\\n\",t,n; i=0}' .project)",
+      "Bash(awk '/^SUBDIRS/{f=1} f&&/HAL_Driver|USB_Device_Library/{print \" HIT: \"$0} /^$/{if\\(f\\)exit}' Debug/sources.mk)",
+      "Bash(exit 1)",
+      "Bash(command -v make)",
+      "Bash(make -n all)",
+      "Bash(ls \"C:/ST/STM32CubeIDE_2.1.1/STM32CubeIDE/plugins/\" 2>/dev/null | grep -i \"make\" ; echo \"---\" ; find \"C:/ST/STM32CubeIDE_2.1.1/STM32CubeIDE/plugins\" -name \"make.exe\" 2>/dev/null | head -3)",
+      "Bash(awk '/<link>/{i=1} i&&/<name>/{gsub\\(/.*<name>|<\\\\/name>.*/,\"\"\\);n=$0} i&&/<type>/{gsub\\(/.*<type>|<\\\\/type>.*/,\"\"\\);t=$0} i&&/<\\\\/link>/{if\\(n ~ /FatFs/\\)printf \"type=%s  %s\\\\n\",t,n; i=0}' .project)",
+      "Bash(awk '/^SUBDIRS/{f=1} f&&/HAL_Driver|USB_Device_Library/{print \"  \"$0} /^$/{if\\(f\\)exit}' Debug/sources.mk)",
+      "Bash(ls -la --time-style=+%H:%M Debug/sources.mk)",
+      "Bash(head -2 \"Debug/Drivers/STM32H7xx_HAL_Driver/Src/subdir.mk\")",
+      "Bash(ls -la --time-style=+%H:%M Debug/HCU_V2_CM7.elf)",
+      "Bash(cp .project .project.known-good)",
+      "Bash(cp .cproject .cproject.known-good)",
+      "Bash(rm -f .project.bak)",
+      "Bash(awk '/<link>/{i=1} i&&/<name>/{gsub\\(/.*<name>|<\\\\/name>.*/,\"\"\\);n=$0} i&&/<type>/{gsub\\(/.*<type>|<\\\\/type>.*/,\"\"\\);t=$0} i&&/<\\\\/link>/{printf \"type=%s %s\\\\n\",t,n; i=0}' .project.known-good)",
+      "PowerShell(gh --version)",
+      "PowerShell(Test-Path .gitignore; \"---\"; Get-ChildItem -Directory CM4,CM7 -Force -ErrorAction SilentlyContinue | Select-Object FullName; \"---size---\"; \"{0:N1} MB\" -f \\(\\(Get-ChildItem -Recurse -File -Force | Measure-Object Length -Sum\\).Sum/1MB\\))"
+    ]
+  }
+}
