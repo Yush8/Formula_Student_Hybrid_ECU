@@ -25,7 +25,7 @@ before asking for a feature, so it follows the established conventions.
 
 **Hand-written modules (`Core/Src` + `Core/Inc`, outside regen):**
 - `model_bridge.c/.h` — the adapter. Only file that includes both `main.h` and `HCU_V2_Simulink.h`. Exposes `Model_Init()`, `Model_Step()`.
-- `params.c/.h` — parameter store: `g_params`, defaults, descriptor table, clamping, flash save/load. Single source of truth for tunables.
+- `params.c/.h` + `params.def` — parameter store: `g_params`, defaults, descriptor table, clamping, flash save/load. Single source of truth for tunables. **`params.def` is the user-facing X-macro list — one line per tunable; the struct/defaults/table all generate from it (§8).**
 - `console.c/.h` — USB-CDC command console; thin UI over `params`.
 - `can.c/.h` + `can1_messages.def` / `can2_messages.def` — dual-FDCAN demux/tx (see §13).
 
@@ -57,26 +57,42 @@ Hardware reality (which pin, active-low polarity) lives in the bridge; logic sta
 
 Same name in Simulink and C. Cost of a new signal = 1 port + 1 bridge line.
 
-## 8. Recipe — add a tunable parameter
-1. Simulink: add an Inport (`single` floats, `int32` ints, boolean→`int32` 0/1).
-2. `params.h`: add a field to `Params_t`.
-3. `params.c`: add a default in `PARAMS_DEFAULT` **and** a row in `TABLE[]` (name, type tag `P_F32`/`P_I32`, `&g_params.x`, lo, hi).
-4. `params.c`: **bump `CONFIG_VERSION`** (struct shape changed — §10).
-5. `model_bridge.c`: `U.x = g_params.x;`.
+## 8. Recipe — add a tunable parameter (now ONE line, like a CAN id)
+1. **`CM7/Core/Inc/params.def`: add ONE line** —
+   `PARAM_F32( name, default, min, max )` (Simulink `single`), or
+   `PARAM_I32( name, default, min, max )` (Simulink `int32`, or a boolean as 0/1).
+   The `Params_t` struct, the defaults, the safe-range table, the console
+   (`list`/`get`/`set`/`save`), the Config GUI and flash load/save are **all
+   generated from that one line** via X-macros — they cannot desync (same trick
+   as the CAN/log `.def`s, §13/§16).
+2. *(Optional — only if the MODEL must read it.)* Simulink: add a root Inport with
+   the **same name**; `model_bridge.c`: add **`MODEL_PARAM(name);`** (one line,
+   deliberately yours to control — see the bridge). A firmware-only tunable
+   (e.g. a log rate that never enters the model) skips this step entirely.
 
-**Datatype rule:** the table reads each value via `void*` + type tag, so field size and tag must agree (`P_F32`=4-byte float, `P_I32`=4-byte int; bool stored as `int32_t` 0..1). Mismatch = reading neighbouring memory.
+**No `CONFIG_VERSION` bump needed.** A layout fingerprint (`layout_id`, an FNV
+hash of the parameter names+types) is stored in the saved blob, so editing
+`params.def` auto-invalidates stale flash → safe defaults; just `save` once after
+reflashing (§9).
+
+**Datatype rule (still applies, but now enforced for you):** `PARAM_F32` ⇒ a
+`float` field *and* the `P_F32` tag; `PARAM_I32` ⇒ an `int32_t` field *and* the
+`P_I32` tag (bool as 0/1). The `.def` line picks the field type and the table tag
+**together**, so the old "field size must match the tag" footgun is gone.
 
 ## 9. Config / flash persistence (the "blob")
-One packed `ConfigBlob_t` = `{ magic, version, params, crc }` in a dedicated sector.
-- **magic** distinguishes our data from blank/junk flash; **version** is the *config layout* version (catches valid-data-wrong-shape); **crc** (CRC32 over everything before it) catches corruption/half-writes.
+One packed `ConfigBlob_t` = `{ magic, version, layout_id, params, crc }` in a dedicated sector.
+- **magic** distinguishes our data from blank/junk flash; **version** is a manual *semantic* version (bump only rarely); **layout_id** is an FNV fingerprint of the `params.def` names+types — it catches "valid data, wrong shape" automatically, so adding/removing/renaming a parameter no longer needs a manual version bump (§8); **crc** (CRC32 over everything before it) catches corruption/half-writes.
 - **Sector: bank 2, last sector (`0x081E0000`).** CM7 runs from bank 1; H7 read-while-write only works *across* banks, so writing config in bank 2 doesn't stall the running CPU. No CM7 linker change.
 - `Params_Init()`: read → check magic/version/CRC → load if all pass, else compiled-in **defaults**; always **clamp** afterward. "Any doubt → safe defaults."
 - `Params_Save()`: build blob, CRC, **erase then program**. Single copy → power-loss mid-save reverts to defaults next boot (safe). Treat `save` as a **pit/stationary action**.
-- Usage: change value → `save`. Change struct shape → bump `CONFIG_VERSION`, reflash, `save`. `defaults` then `save` = factory reset.
+- Usage: change value → `save`. Add/remove/rename a parameter (edit `params.def`) → reflash, `save`; **no version bump** (the `layout_id` fingerprint auto-rejects the old blob → defaults). `defaults` then `save` = factory reset.
 - **Do not** call `SCB_InvalidateDCache_by_Addr` after the write — faulted on this board's MPU and isn't needed (config is read only at boot, cold cache).
 
 ## 10. USB CDC console
-USB_OTG_FS, Device, Full Speed, behind an ADuM4160 isolator. DP/DM = PA12/PA11. Hardware VBUS sensing disabled; PA9 is plain GPIO reading isolated VBUS. Line-based text protocol over virtual COM: `help`, `list`, `get <name>`, `set <name> <val>`, `save`, `defaults`, `ping`. Firmware echoes chars (PuTTY local echo OFF). newlib-nano printf has **no `%f`** — format floats by hand (`f32_to_str`). TX = `CDC_Transmit_FS` with busy-retry. Only one program can hold the COM port at a time.
+USB_OTG_FS, Device, Full Speed, behind an ADuM4160 isolator. DP/DM = PA12/PA11. Hardware VBUS sensing disabled; PA9 is plain GPIO reading isolated VBUS. Line-based text protocol over virtual COM: `help`, `list`, `get <name>`, `set <name> <val>`, `save`, `defaults`, `time`, `time set YYYY-MM-DD HH:MM:SS`, `ping`. Firmware echoes chars (PuTTY local echo OFF). newlib-nano printf has **no `%f`** — format floats by hand (`f32_to_str`). TX = `CDC_Transmit_FS` with busy-retry. Only one program can hold the COM port at a time. The console is a thin UI over `params.c` — it iterates the generated parameter table, so it gains new `params.def` parameters with **no edit**.
+
+**Off-target front-end `ConfigGUI.py`** drives this exact protocol over pyserial. It **auto-discovers the parameters by parsing `list`** (so a new `params.def` line appears in the GUI with no edit there either), has buttons for `save`/`defaults`, a "Set clock → PC time" button (sends `time set` with the PC's wall-clock) + board-clock readout, and remembers/auto-reconnects the last COM port. See `EXTENDING_THE_HCU.md`.
 
 ## 11. Simulink → IDE codegen workflow
 - Embedded Coder, system target `ert.tlc`, Hardware board **None**, **Nonreusable function**, "Generate example main" **OFF**, "Generate code only" **ON**, fixed-step **discrete** solver at base rate, Hardware = ARM Cortex-M7.
@@ -87,7 +103,7 @@ USB_OTG_FS, Device, Full Speed, behind an ADuM4160 isolator. DP/DM = PA12/PA11. 
 ## 12. Key intricacies / lessons learned
 - **Source Location vs Include Path** are different settings (§11). Note: `.def` files (X-macro lists) are *include-only* — they need the include path (Core/Inc) but **not** a Source Location.
 - **Unbalanced brace** in `main.c` shows as `invalid storage class for function …` on the *next* function + `expected declaration … at end of input` — it's a missing `}`, usually at the `USER CODE BEGIN 3` / `while(1)` boundary.
-- **Datatype size must match the table tag** (§8); **bump `CONFIG_VERSION`** whenever `Params_t` changes (§9); **no `%f`** under newlib-nano.
+- **Parameters are now one `params.def` line** (§8); the old "datatype size must match the table tag" footgun and the manual `CONFIG_VERSION` bump are both gone (the `.def` macro picks field+tag together; `layout_id` auto-rejects stale flash, §9). **No `%f`** under newlib-nano still bites — format floats by hand.
 - After a build fix use **Run/Debug** (downloads); plain Build only compiles.
 - **FDCAN bus-off recovery needs `HAL_FDCAN_Stop()` then `HAL_FDCAN_Start()`** — a bare `Start` fails because the HAL software state stays `BUSY` after a hardware bus-off (§13).
 - **CubeMX regenerate corrupts `CM7/.project` linked resources (recurring — known CubeMX dual-core bug).** Two faces of one bug, both fail at the **link** step:

@@ -17,20 +17,24 @@
  *   - loads from / saves to internal flash, integrity-checked with a CRC
  *   - out-of-range values are clamped to safe limits on load and on set
  *
- * To add a parameter: add a field to Params_t, a default in PARAMS_DEFAULT,
- * and a row in the table (all in params.c). The console and flash pick it up
- * automatically.
+ * >>> TO ADD A PARAMETER: add ONE line to params.def. <<<
+ * The struct below, the defaults, the safe-range table, the console commands,
+ * the Config GUI and the flash save/load are ALL generated from that one list,
+ * so they cannot drift apart (same X-macro idea as can1_messages.def and
+ * log_signals.def). You never edit this header to add a tunable.
  *
  * NOTE: safety-critical limits (AIR / precharge thresholds, fault trips) do
  * NOT belong here. Keep those as const in firmware so that no console command
  * or edited flash image can ever move them.
  */
 
+/* The live tunables. Each PARAM_* line in params.def becomes one field. */
 typedef struct {
-    float   kp;
-    float   ki;
-    int32_t torque_limit;
-    int32_t Parameter_1;
+#define PARAM_F32(name, def, lo, hi)  float   name;
+#define PARAM_I32(name, def, lo, hi)  int32_t name;
+#include "params.def"
+#undef PARAM_F32
+#undef PARAM_I32
 } Params_t;
 
 extern Params_t g_params;   /* the live values */

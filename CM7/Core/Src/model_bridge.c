@@ -34,6 +34,21 @@
         HCU_V2_Simulink_U.port##_age = can.busfield[slot].age_ms;             \
     } while (0)
 
+/* MODEL_PARAM: feed one tunable parameter to the model in a single line.
+ *
+ *     MODEL_PARAM( kp );
+ *
+ * expands to   HCU_V2_Simulink_U.kp = g_params.kp;   so a parameter you added
+ * in params.def reaches the Simulink model. The parameter name MUST match the
+ * Simulink Inport name exactly (same convention as CAN_FEED's port name).
+ *
+ * You stay in control here: list one MODEL_PARAM line per parameter you
+ * actually want the model to read. A firmware-only tunable (say a log rate that
+ * never enters the model) simply gets no line - it still lives in params.def,
+ * the console and flash, it just isn't fed to Simulink.
+ */
+#define MODEL_PARAM(name)  (HCU_V2_Simulink_U.name = g_params.name)
+
 void Model_Init(void)
 {
     /* one-time model setup: clears states, loads parameter defaults */
@@ -69,8 +84,16 @@ void Model_Step(void)
 //    HCU_V2_Simulink_U.User_Button_1 = (HAL_GPIO_ReadPin(User_Button_1_GPIO_Port, User_Button_1_Pin) == GPIO_PIN_SET);
 //
 //    HCU_V2_Simulink_U.User_Button_2 = (HAL_GPIO_ReadPin(User_Button_2_GPIO_Port, User_Button_2_Pin) == GPIO_PIN_SET);
-//
-//    HCU_V2_Simulink_U.Parameter_1 = g_params.Parameter_1;
+
+	/* ----- feed tunable parameters to the model (one line each) -----------
+	 * Add a parameter in params.def (it then appears on the console and GUI
+	 * automatically). To also let the MODEL use it, give it a matching Simulink
+	 * Inport and add one MODEL_PARAM line here. Uncomment / add as needed:
+	 */
+//    MODEL_PARAM(kp);
+//    MODEL_PARAM(ki);
+//    MODEL_PARAM(torque_limit);
+//    MODEL_PARAM(Parameter_1);
 
     /* ---- 2. run one model step ------------------------------------------ */
     HCU_V2_Simulink_step();

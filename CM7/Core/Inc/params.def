@@ -1,0 +1,61 @@
+/*
+ * params.def  --  THE TUNABLE PARAMETERS (the values you can change at runtime)
+ *
+ *  >>>>>>  THIS IS THE ONE FILE YOU EDIT TO ADD/REMOVE A TUNABLE.  <<<<<<
+ *  No C knowledge needed. Exactly like can1_messages.def is for CAN and
+ *  log_signals.def is for logging: add one line per parameter and EVERYTHING
+ *  else follows automatically -
+ *      - the firmware storage (the live value in RAM),
+ *      - the built-in default it starts from,
+ *      - the safe min/max it is clamped to,
+ *      - the USB console (`list` / `get` / `set` / `save`),
+ *      - the Config GUI (it auto-discovers whatever the board reports),
+ *      - the flash save/load (stale flash is auto-rejected when this list changes).
+ *  ...so none of them can ever drift out of sync.
+ *
+ *  ---------------------------------------------------------------------------
+ *  TO ADD A PARAMETER  (one line):
+ *
+ *     A floating-point value (Simulink 'single'):
+ *           PARAM_F32( <name>, <default>, <min>, <max> )
+ *
+ *     A whole-number value (Simulink int32, or a boolean as 0/1):
+ *           PARAM_I32( <name>, <default>, <min>, <max> )
+ *
+ *     <name>     the name you type in the console and see in the GUI. If you
+ *                want the model to USE this value, name it EXACTLY like the
+ *                Simulink Inport and add one MODEL_PARAM(<name>) line in
+ *                model_bridge.c (see that file - it is one obvious line and it
+ *                stays under your control).
+ *     <default>  the value the board powers up with before any `save`. Floats
+ *                need an 'f' suffix (e.g. 1.5f); ints are plain (e.g. 200).
+ *     <min>/<max> the safe range. The board CLAMPS to this on every `set` and
+ *                on boot, so a typo or a bad flash image can never apply an
+ *                out-of-range value. Use the same numeric style as the default.
+ *
+ *     Example - a proportional gain, default 1.5, allowed 0..100:
+ *           PARAM_F32( kp, 1.5f, 0.0f, 100.0f )
+ *
+ *  After editing: rebuild CM7 and reflash. Then `save` once on the console (or
+ *  the GUI Save button) to write the new layout to flash. That's it - the new
+ *  parameter shows up in the console and the GUI automatically.
+ *  ---------------------------------------------------------------------------
+ *
+ *  Rules / notes:
+ *   - No semicolon, no comma at the end of the line (just like CAN_MSG).
+ *   - Each <name> must be unique in this list (it becomes a struct field name),
+ *     so it must be a valid C identifier: letters, digits, underscore; no spaces.
+ *   - SAFETY-CRITICAL limits (AIR / precharge thresholds, fault trips) do NOT
+ *     belong here - keep those as `const` in firmware so no console command or
+ *     edited flash image can ever move them.
+ *   - Changing this list changes the flash layout. You do NOT need to bump any
+ *     version by hand: a layout fingerprint is stored with the saved config, so
+ *     after a change the old flash is detected as stale and the board falls back
+ *     to these defaults (safe). Just `save` once after reflashing.
+ */
+
+/*           name            default   min       max     */
+PARAM_F32(   kp,             1.500f,   0.0f,     100.0f )
+PARAM_F32(   ki,             0.200f,   0.0f,     100.0f )
+PARAM_I32(   torque_limit,   200,      0,        240    )
+PARAM_I32(   Parameter_1,    0,        0,        1      )

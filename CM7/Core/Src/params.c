@@ -15,18 +15,24 @@
 
 /* ================================================================== */
 /* Live values + defaults                                             */
+/*                                                                    */
+/* Both are GENERATED from params.def - add a parameter there, not    */
+/* here. (Same X-macro trick as the CAN / log .def lists.)            */
 /* ================================================================== */
 Params_t g_params;
 
 static const Params_t PARAMS_DEFAULT = {
-    .kp           = 1.500f,
-    .ki           = 0.200f,
-    .torque_limit = 200,
-	.Parameter_1 = 0
+#define PARAM_F32(name, def, lo, hi)  .name = def,
+#define PARAM_I32(name, def, lo, hi)  .name = def,
+#include "params.def"
+#undef PARAM_F32
+#undef PARAM_I32
 };
 
 /* ================================================================== */
 /* Descriptor table: name, type, where it lives, and its safe range   */
+/* Also generated from params.def, so it can never disagree with the  */
+/* struct above.                                                       */
 /* ================================================================== */
 typedef enum { P_F32, P_I32 } ptype_t;
 
@@ -39,11 +45,12 @@ typedef struct {
 } ParamDesc_t;
 
 static const ParamDesc_t TABLE[] = {
-    /*  name            type    pointer                  lo      hi   */
-    { "kp",           P_F32, &g_params.kp,           0.0f,  100.0f },
-    { "ki",           P_F32, &g_params.ki,           0.0f,  100.0f },
-    { "torque_limit", P_I32, &g_params.torque_limit, 0.0f,  240.0f },
-	{ "Parameter_1", P_I32, &g_params.Parameter_1, 0.0f, 1.0f },
+    /*  name (stringized)   type    pointer            lo            hi   */
+#define PARAM_F32(name, def, lo, hi)  { #name, P_F32, &g_params.name, (float)(lo), (float)(hi) },
+#define PARAM_I32(name, def, lo, hi)  { #name, P_I32, &g_params.name, (float)(lo), (float)(hi) },
+#include "params.def"
+#undef PARAM_F32
+#undef PARAM_I32
 };
 #define TABLE_COUNT (sizeof(TABLE) / sizeof(TABLE[0]))
 
@@ -60,11 +67,17 @@ static const ParamDesc_t TABLE[] = {
 #define CONFIG_FLASH_SECTOR  FLASH_SECTOR_7
 
 #define CONFIG_MAGIC    0x32564348UL         /* tag so we recognise our blob */
-#define CONFIG_VERSION  2U
+#define CONFIG_VERSION  2U                   /* bump only for a SEMANTIC change; */
+                                             /* adding/removing a param is caught */
+                                             /* automatically by layout_id below. */
 
 typedef struct {
     uint32_t magic;
     uint32_t version;
+    uint32_t layout_id;  /* fingerprint of params.def (names+types). A change to  */
+                         /* the parameter list changes this, so an old saved blob */
+                         /* with a different layout is rejected -> safe defaults.  */
+                         /* This is why you NEVER hand-bump a version for a param. */
     Params_t params;
     uint32_t crc;        /* over every byte before this field */
 } ConfigBlob_t;
@@ -93,6 +106,27 @@ static uint32_t crc32(const uint8_t *data, uint32_t len)
             crc = (crc >> 1) ^ (0xEDB88320UL & (uint32_t)(-(int32_t)(crc & 1U)));
     }
     return ~crc;
+}
+
+/* Fingerprint of the current parameter layout: an FNV-1a hash over each
+ * parameter's name and type. It depends ONLY on params.def, so adding,
+ * removing, renaming or retyping a parameter changes it. Stored in the saved
+ * blob and checked on load, so stale flash from a different .def is rejected
+ * and the board falls back to defaults - no manual version bump needed. */
+static uint32_t params_layout_id(void)
+{
+    uint32_t h = 2166136261UL;                 /* FNV-1a offset basis */
+    for (uint32_t i = 0; i < TABLE_COUNT; i++) {
+        for (const char *n = TABLE[i].name; *n; n++) {
+            h ^= (uint8_t)*n;
+            h *= 16777619UL;
+        }
+        h ^= (uint8_t)TABLE[i].type;           /* P_F32 vs P_I32 */
+        h *= 16777619UL;
+        h ^= 0xFFU;                            /* entry separator */
+        h *= 16777619UL;
+    }
+    return h;
 }
 
 static const ParamDesc_t *find(const char *name)
@@ -182,12 +216,13 @@ void Params_Init(void)
     ConfigBlob_t b;
     flash_read_blob(&b);
 
-    if (b.magic   == CONFIG_MAGIC &&
-        b.version == CONFIG_VERSION &&
-        b.crc     == crc32((const uint8_t *)&b, offsetof(ConfigBlob_t, crc))) {
+    if (b.magic     == CONFIG_MAGIC &&
+        b.version   == CONFIG_VERSION &&
+        b.layout_id == params_layout_id() &&
+        b.crc       == crc32((const uint8_t *)&b, offsetof(ConfigBlob_t, crc))) {
         g_params = b.params;        /* a valid saved config */
     } else {
-        Params_LoadDefaults();      /* blank / corrupt / old version */
+        Params_LoadDefaults();      /* blank / corrupt / old version / changed .def */
     }
     clamp_all();                    /* never trust stored values blindly */
 }
@@ -195,10 +230,11 @@ void Params_Init(void)
 int Params_Save(void)
 {
     ConfigBlob_t b;
-    b.magic   = CONFIG_MAGIC;
-    b.version = CONFIG_VERSION;
-    b.params  = g_params;
-    b.crc     = crc32((const uint8_t *)&b, offsetof(ConfigBlob_t, crc));
+    b.magic     = CONFIG_MAGIC;
+    b.version   = CONFIG_VERSION;
+    b.layout_id = params_layout_id();
+    b.params    = g_params;
+    b.crc       = crc32((const uint8_t *)&b, offsetof(ConfigBlob_t, crc));
     return flash_write_blob(&b);
 }
 

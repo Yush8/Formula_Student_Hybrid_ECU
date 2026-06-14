@@ -29,3 +29,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# ConfigGUI remembered port / baud (per-machine, not source)
+ConfigGUI.settings.json
