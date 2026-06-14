@@ -45,10 +45,13 @@ uint32_t SdLog_FatTime(void);
  *   mounted    1         => the card mounted OK
  *   ring_seen  1         => CM4 sees CM7's ring (magic/version match @0x38000000)
  *   records    climbing  => records are being drained to the card
- *   last_fr    != 0      => last FatFs error (FRESULT code)
- * Quick reads: loops==0 -> CM4 not running/flashed (or stuck in Error_Handler);
- * loops>0 & mounted==0 -> card / format / seating; mounted==1 & ring_seen==0 ->
- * shared-memory address mismatch between cores. */
+ *   last_fr    -1         => no card / not seated (HW init failed) - the normal
+ *                           "running with no SD" state; CM4 retries every ~2 s
+ *   last_fr    >0         => last FatFs error (FRESULT code)
+ * Quick reads: loops==0 -> CM4 not running/flashed; loops climbing & mounted==0 &
+ * last_fr==-1 -> no card (expected: logging off, car unaffected); loops>0 &
+ * mounted==0 & last_fr>0 -> card present but FAT/format/seating; mounted==1 &
+ * ring_seen==0 -> shared-memory address mismatch between cores. */
 typedef struct {
     uint32_t loops;        /* SdLog_Service() call count (heartbeat)       */
     uint32_t records;      /* records drained to the card so far           */

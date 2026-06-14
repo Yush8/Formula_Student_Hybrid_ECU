@@ -17,11 +17,20 @@
 #include <stdio.h>     /* snprintf */
 #include <stdbool.h>   /* bool/true/false (not pulled in by the above on CM4) */
 
+/* The SDMMC2 handle, defined in CM4 main.c (set up by MX_SDMMC2_SD_Init). We
+ * own the card's run-time (re)init here so it happens in exactly one place and
+ * can be retried cleanly - see sd_card_init(). */
+extern SD_HandleTypeDef hsd2;
+
 /* The shared inter-core struct. The .shared_ram NOLOAD section in CM4's linker
  * script places it at HCU_IPC_BASE = 0x38000000 (D3 SRAM4) - the SAME physical
  * address CM7's copy lands at, so the two binaries share one struct. NOLOAD =>
  * CM4 startup never zeroes it (CM7 owns initialisation). */
 volatile hcu_ipc_t g_hcu_ipc __attribute__((section(".shared_ram")));
+
+/* last_fr sentinel: card hardware init failed (almost always = no card / not
+ * seated). Distinct from any FatFs FRESULT (which are small non-negative). */
+#define SDLOG_FR_NO_CARD   (-1)
 
 /* ---- tunables ---------------------------------------------------------- */
 #define SDLOG_FILE_MAX_BYTES   (8u * 1024u * 1024u)  /* rotate at ~8 MB/file   */
@@ -95,16 +104,49 @@ uint32_t SdLog_FatTime(void)
          | ((uint32_t)(ss / 2u));
 }
 
+/* ---- card hardware (re)init -------------------------------------------- *
+ * The ONE place the SD card is brought up at run time. Idempotent: the leading
+ * HAL_SD_DeInit() returns the handle to a clean RESET state, so a previous
+ * failed/partial init (e.g. the no-card boot attempt that fail-forwarded through
+ * Error_Handler) can never poison a later try. DISABLE_SD_INIT in sd_diskio.c
+ * means FatFs no longer inits the card, so this is the sole init path - no more
+ * double init. Returns true only when a card is up in 4-bit mode.
+ *
+ * No card present => HAL_SD_Init() fails cleanly here (bounded by the HAL's
+ * internal timeouts) and we report it; nothing halts, nothing blocks CM7. */
+static bool sd_card_init(void)
+{
+    HAL_SD_DeInit(&hsd2);                       /* always start from a clean handle */
+
+    if (HAL_SD_Init(&hsd2) != HAL_OK) {
+        return false;                          /* no card / not seated */
+    }
+    if (HAL_SD_ConfigWideBusOperation(&hsd2, SDMMC_BUS_WIDE_4B) != HAL_OK) {
+        HAL_SD_DeInit(&hsd2);                   /* don't leave a half-up handle */
+        return false;
+    }
+    return true;
+}
+
 /* ---- file handling ----------------------------------------------------- */
 static void try_mount(void)
 {
-    /* opt = 1: mount now (probes the card). Fails cleanly with no card. */
+    /* Bring the card up ourselves first. If there's no card this fails cleanly
+     * and we stay unmounted - SdLog_Service() will retry. */
+    if (!sd_card_init()) {
+        g_sdlog_status.last_fr = SDLOG_FR_NO_CARD;
+        return;
+    }
+
+    /* opt = 1: mount now. With DISABLE_SD_INIT this only checks the (already up)
+     * card's state and reads the FAT - it does NOT re-init the hardware. */
     FRESULT fr = f_mount(&SDFatFS, SDPath, 1);
     if (fr == FR_OK) {
         s_mounted = true;
         g_sdlog_status.mounted = 1u;
     } else {
         g_sdlog_status.last_fr = (int32_t)fr;
+        HAL_SD_DeInit(&hsd2);                   /* leave it clean for the next try */
     }
 }
 
@@ -167,6 +209,9 @@ static bool flush_buffer(void)
         f_close(&s_fil);
         s_file_open = false;
         s_mounted   = false;
+        s_fill      = 0;          /* drop the unwritten sector - it belonged to the
+                                   * file we just closed; don't bleed it into the
+                                   * next file if the card comes back */
         g_sdlog_status.file_open = 0u;
         g_sdlog_status.mounted   = 0u;
         return false;

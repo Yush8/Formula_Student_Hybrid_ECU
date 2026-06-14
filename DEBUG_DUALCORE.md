@@ -124,8 +124,9 @@ running `while(1)`/`SdLog_Service`, **never at `main`**. (Reset = none is alread
 
 | Reading | Meaning |
 |---|---|
-| `loops == 0` | CM4 not running / stuck in `Error_Handler` (e.g. no card at boot) |
-| `loops > 0`, `mounted == 0` | Card / FAT32 / seating problem — read `last_fr` |
+| `loops == 0` | CM4 not running / flashed, or stuck in `Error_Handler` for a **non-SD** fault (no card no longer halts CM4) |
+| `loops` climbing, `mounted == 0`, `last_fr == -1` | **No card / not seated** — normal "running without SD"; logging off, car unaffected |
+| `loops > 0`, `mounted == 0`, `last_fr > 0` | Card present but FAT32 / format / seating problem — read `last_fr` |
 | `mounted == 1`, `ring_seen == 0` | Shared-RAM address mismatch — confirm `&g_hcu_ipc == 0x38000000` |
 | `ring_seen == 1`, `records` climbing | Working ✅ |
 

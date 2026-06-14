@@ -120,7 +120,7 @@ USB_OTG_FS, Device, Full Speed, behind an ADuM4160 isolator. DP/DM = PA12/PA11. 
 5. **SD config mirror.** Human-readable `key value` export/import on microSD (reuse the console `set` parser); git-track setups per session.
 6. **Console diagnostics (`stat`).** Loop rate, overrun count, `g_can_stats` (per-bus rx-lost/recoveries/last-seen), free stack — trackside without a debugger.
 7. **Composite USB CDC + MSC (later).** Pull SD logs without removing the card.
-8. **Dual-core split — DONE & verified (see §16).** CM7 = control loop, CM4 = SD logging, IPC via a lock-free ring in shared SRAM. Scoped to logging only (wheel-speed dropped, so CM4 carries nothing else). End-to-end working: card yields `LOGxxxx.BIN` → CSV. Remaining polish (live CM4 debug, `g_sched_overruns==0` confirmation, no-card-at-boot robustness) tracked in §16.6.
+8. **Dual-core split — DONE & verified (see §16).** CM7 = control loop, CM4 = SD logging, IPC via a lock-free ring in shared SRAM. Scoped to logging only (wheel-speed dropped, so CM4 carries nothing else). End-to-end working: card yields `LOGxxxx.BIN` → CSV. No-card-at-boot now graceful (verified). Remaining polish (`g_sched_overruns==0` confirmation under load) tracked in §16.6.
 
 **Peripherals still to bring up through the bridge (CM7):** SPI3 (ASM330LHHX IMU + INT), ADC (10k NTC thermistor), the SDC/AIR/precharge safety subsystem (highest rigour). *(SDMMC2 + FatFS have been reassigned to the CM4 context for logging — no longer a CM7/bridge concern; the old `main.c` SD self-test has been removed. See §16. Wheel-speed timers TIM2/TIM5 were freed — not used on this year's car.)*
 
@@ -164,7 +164,7 @@ The control loop is a hard 100 Hz = **10 ms budget** per tick (TIM6 → `Sched_S
 - `Shared/hcu_ipc.h` — shared by both cores. The ring + record struct + fixed D3-SRAM4 placement. Reached by a **source-relative include** (`../../../Shared/...`) from each core's headers — NOT an `-I` path (CubeMX wipes those on regen).
 - **`Shared/log_signals.def`** — the user-facing "what to log" list (one `LOG_Y`/`LOG_U` line per signal). Included by `hcu_ipc.h` (generates the record) and by `model_bridge.c` (generates the packing). **This is the only file to edit to change logging.**
 - CM7: `logger.c/.h` (producer ring), `clock.c/.h` (RTC seed/publish + `time` console cmd). `g_hcu_ipc` defined in `logger.c`'s `.shared_ram`.
-- CM4: `sd_logger.c/.h` — consumer; CM4 `main.c` superloop calls `SdLog_Service()`. `g_hcu_ipc` defined here in `.shared_ram`. `fatfs.c get_fattime()` forwards to `SdLog_FatTime()`. CM4 already has SDMMC2 + FatFs from the context reassignment.
+- CM4: `sd_logger.c/.h` — consumer; CM4 `main.c` superloop calls `SdLog_Service()`. `g_hcu_ipc` defined here in `.shared_ram`. `fatfs.c get_fattime()` forwards to `SdLog_FatTime()`. CM4 already has SDMMC2 + FatFs from the context reassignment. **`sd_logger.c` also owns the run-time SD hardware (re)init (`sd_card_init()`) — the single, idempotent init path now that `DISABLE_SD_INIT` is set in `sd_diskio.c`; this is what makes no-card-at-boot graceful (see §16.6).**
 - Off-target: **`hcu_logdecode.py`** (repo root) — decodes `LOGxxxx.BIN` → CSV by reading `log_signals.def`.
 - Both linker scripts (`CM7/STM32H745ZITX_FLASH.ld`, `CM4/STM32H745ZITX_FLASH.ld`) get a `.shared_ram` NOLOAD section at `0x38000000` — **edited by hand; CubeMX does not manage cross-core shared sections.**
 
@@ -202,16 +202,44 @@ The control loop is a hard 100 Hz = **10 ms budget** per tick (TIM6 → `Sched_S
 
 **DONE & VERIFIED — Live CM4 debugging (was open; closed this session):** stepping/watching CM4 in the debugger works with the dual-core *order* now nailed down — see the rewritten **§16.9** and the full bench walkthrough in **`DEBUG_DUALCORE.md`** (repo root). One-line version: **Debug M7 → Debug M4 → Resume M7 → Resume M4** (the CM4 attach resets the M4, and CM7's HSEM wake is one-shot, so the release must come *after* CM4 has attached).
 
+**DONE & VERIFIED — No-card-at-boot robustness (the car may run with NO SD card):**
+The earlier naive fix (make `Error_Handler()` *return*) was reverted because it broke
+card-present logging. Root cause: the card was inited **twice** (`MX_SDMMC2_SD_Init`
+then `f_mount`→`BSP_SD_Init`) and a failed first init left the HAL handle dirty →
+later mounts stuck at `FR_NOT_READY`. The proper fix closes **both** holes and needs
+**no CubeMX regen** (all edits live in USER CODE markers / hand-written files):
+- **`CM4/FATFS/Target/sd_diskio.c`: `#define DISABLE_SD_INIT`** (in the `disableSDInit`
+  USER CODE marker). FatFs's `SD_initialize()` no longer calls `BSP_SD_Init()`, so the
+  card is brought up in **exactly one place** — kills the double-init.
+- **`CM4/Core/Src/sd_logger.c`: `sd_card_init()`** is now the sole run-time init —
+  `HAL_SD_DeInit()` → `HAL_SD_Init()` → `HAL_SD_ConfigWideBusOperation(4-bit)`. The
+  leading `DeInit` makes it **idempotent**: a previous failed/partial init (incl. the
+  no-card boot) can never poison a later attempt. `try_mount()` calls it first; on
+  failure it stays unmounted (`last_fr = -1`) and `SdLog_Service()` retries every ~2 s.
+  `flush_buffer()` now also resets `s_fill` on a write error (don't bleed a half-sector
+  into the next file if the card returns).
+- **`CM4/Core/Src/main.c`: scoped `Error_Handler()` fail-forward.** A `static volatile
+  uint8_t s_sd_boot_init` is set in `SDMMC2_Init 1` / cleared in `SDMMC2_Init 2`;
+  `Error_Handler()` `return`s **only while that flag is set** — so the boot SD init can
+  fail forward with no card, while `Error_Handler()` keeps its halt-everything behaviour
+  for every other caller.
+- **VERIFIED on the bench:** card present → logs exactly as before (single controlled
+  4-bit init, `LOGxxxx.BIN` + populated CSV). No card → CM4 boots through, logging off,
+  CAN/control loop unaffected. Triage: `g_sdlog_status.last_fr == -1` = no card (normal
+  "running without SD"); `loops` keeps climbing = CM4 alive.
+
 **STILL OPEN / NOT done (pick up here):**
 1. **`g_sched_overruns == 0` under logging load — NOT yet confirmed.** This is *the* proof CM7 is isolated from SD stalls. Watch `g_sched_overruns` (CM7) over a long run that includes card flush/GC stalls; it must stay 0.
-2. **No-card-at-boot — still open (real need: the car may run with NO SD card inserted).** Today CM4 halts in `Error_Handler()` when no card is present at boot (CM7 / control loop unaffected — separate core). One fix was tried and **reverted**: making CM4's `Error_Handler()` *return* instead of halt during boot SD init. It let CM4 boot card-less but **broke normal card-present 4-bit logging** — the boot SD bring-up runs twice (`MX_SDMMC2_SD_Init`, then `f_mount`→`BSP_SD_Init`) and can't simply "fail-forward"; it left the HAL's SD handle dirty so later mounts stuck at `FR_NOT_READY`. **Approach this fresh** — diagnose first, and re-verify card-present logging still works after any change.
-3. **MPU non-cacheable region** for the shared ring — still deferred (D-cache OFF). Add via CubeMX (Cortex-M7 → MPU) if/when D-cache is enabled.
-4. **`f_expand` / pre-allocation** of the log file — not done; add only if long sessions show FAT-walk stalls (CM4-only, never touches CM7).
-5. **`LOG_ARRAY` macro** for non-scalar signals (e.g. an 8-byte CAN payload as one field) — not implemented; ~5-min add when first needed.
-6. Future nicety: auto-set the RTC from a CAN time message if one exists on the bus (removes the manual `time set`).
+2. **MPU non-cacheable region** for the shared ring — still deferred (D-cache OFF). Add via CubeMX (Cortex-M7 → MPU) if/when D-cache is enabled.
+3. **`f_expand` / pre-allocation** of the log file — not done; add only if long sessions show FAT-walk stalls (CM4-only, never touches CM7).
+4. **`LOG_ARRAY` macro** for non-scalar signals (e.g. an 8-byte CAN payload as one field) — not implemented; ~5-min add when first needed.
+5. Future nicety: auto-set the RTC from a CAN time message if one exists on the bus (removes the manual `time set`).
 
 **BUGS / CAVEATS to note:**
-- **No card at boot ⇒ CM4 halts in `Error_Handler()`** (generated `MX_SDMMC2_SD_Init` fails `HAL_SD_Init`; CM7 unaffected). See STILL-OPEN item 2 — a naive "`Error_Handler()` returns" fix was tried and reverted (it broke card-present 4-bit logging).
+- **No card at boot is now handled gracefully** (CM4 continues, logging off; see the
+  DONE block above). If you ever *regen* and logging breaks with a card present, first
+  re-check that `DISABLE_SD_INIT` is still defined in `sd_diskio.c` (USER CODE markers
+  survive regen, but verify) — without it the double-init returns.
 - **Every CubeMX *Generate Code* re-corrupts BOTH `.project` files** (§12, proven on CM7 *and* CM4 this session). After any regen: restore both `.project.known-good` → delete both `Debug/` → Close/Open both projects → build.
 - **Card must be FAT32** (not exFAT — `_FS_EXFAT=0`) with **8.3 filenames** (`_USE_LFN=0`); `LOGxxxx.BIN` fits.
 - Records are **packed**: the 9-byte seed record makes the sector buffer flush at 504 B (56×9), not exactly 512 — harmless (FatFs re-buffers to its own 512 cache).
@@ -243,4 +271,4 @@ One chip, two cores, two flash banks: **CM7 = bank 1 `0x08000000`, CM4 = bank 2 
 - For clean debug also comment the **second** boot-timeout `Error_Handler()` (CM7 `main.c` ~line 159), like the first (~line 121) — harmless, debug-only.
 - Sanity: `&g_hcu_ipc` must read `0x38000000` on **both** cores (shared struct). Truth test the M4 is alive: `g_sdlog_status.loops` *incrementing*.
 
-**Triage `g_sdlog_status` (CM4) when logs don't appear:** `loops==0` → CM4 not running/flashed or stuck in `Error_Handler` (no card at boot); `loops>0 & mounted==0` → card / FAT32 / seating (read `last_fr`); `mounted==1 & ring_seen==0` → shared-RAM address mismatch; `ring_seen==1 & records` climbing → working.
+**Triage `g_sdlog_status` (CM4) when logs don't appear:** `loops==0` → CM4 not running/flashed (or stuck in `Error_Handler` for a *non-SD* fault — no card no longer halts it); `loops` climbing & `mounted==0` & `last_fr==-1` → **no card / not seated** (normal "running without SD"; logging off, car unaffected); `loops>0 & mounted==0 & last_fr>0` → card present but FAT32 / format / seating (read `last_fr`); `mounted==1 & ring_seen==0` → shared-RAM address mismatch; `ring_seen==1 & records` climbing → working.

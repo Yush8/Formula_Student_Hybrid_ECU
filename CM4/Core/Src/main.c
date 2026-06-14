@@ -58,6 +58,13 @@ SD_HandleTypeDef hsd2;
 
 /* USER CODE BEGIN PV */
 
+/* Set while the boot-time SD init (MX_SDMMC2_SD_Init) is running. When a card is
+ * absent, HAL_SD_Init() fails and the generated code calls Error_Handler(). We do
+ * NOT want that to halt CM4 (the car must run with no card / logging just off).
+ * This flag lets Error_Handler() fail-forward for THAT one call only - it keeps
+ * its normal halt-everything behaviour for every other error. sd_logger.c then
+ * brings the card up itself (cleanly, with retry) once boot has continued. */
+static volatile uint8_t s_sd_boot_init = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -164,7 +171,7 @@ static void MX_SDMMC2_SD_Init(void)
   /* USER CODE END SDMMC2_Init 0 */
 
   /* USER CODE BEGIN SDMMC2_Init 1 */
-
+  s_sd_boot_init = 1;   /* let Error_Handler() fail-forward if no card is present */
   /* USER CODE END SDMMC2_Init 1 */
   hsd2.Instance = SDMMC2;
   hsd2.Init.ClockEdge = SDMMC_CLOCK_EDGE_RISING;
@@ -177,7 +184,7 @@ static void MX_SDMMC2_SD_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN SDMMC2_Init 2 */
-
+  s_sd_boot_init = 0;   /* back to normal: Error_Handler() halts from here on */
   /* USER CODE END SDMMC2_Init 2 */
 
 }
@@ -214,6 +221,13 @@ static void MX_GPIO_Init(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
+  /* No card at boot? The SD init (MX_SDMMC2_SD_Init) failing must NOT halt CM4 -
+   * the car runs with logging simply disabled. Fail-forward for that one call;
+   * sd_logger.c then mounts the card itself (with retry) if/when one is present. */
+  if (s_sd_boot_init)
+  {
+    return;
+  }
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
