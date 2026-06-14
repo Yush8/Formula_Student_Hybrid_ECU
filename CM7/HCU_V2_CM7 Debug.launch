@@ -15,7 +15,7 @@
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.launch.ip_address_local" value="localhost"/>
     <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.launch.limit_swo_clock.enabled" value="false"/>
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.launch.limit_swo_clock.value" value=""/>
-    <stringAttribute key="com.st.stm32cube.ide.mcu.debug.launch.loadList" value="{&quot;fItems&quot;:[{&quot;fIsFromMainTab&quot;:false,&quot;fPath&quot;:&quot;Debug/HCU_V2_CM4.elf&quot;,&quot;fProjectName&quot;:&quot;HCU_V2_CM4&quot;,&quot;fUseActiveBuildConfig&quot;:true,&quot;fPerformBuild&quot;:true,&quot;fDownload&quot;:true,&quot;fLoadSymbols&quot;:true},{&quot;fIsFromMainTab&quot;:true,&quot;fPath&quot;:&quot;Debug/HCU_V2_CM7.elf&quot;,&quot;fProjectName&quot;:&quot;HCU_V2_CM7&quot;,&quot;fPerformBuild&quot;:true,&quot;fDownload&quot;:true,&quot;fLoadSymbols&quot;:true}]}"/>
+    <stringAttribute key="com.st.stm32cube.ide.mcu.debug.launch.loadList" value="{&quot;fItems&quot;:[{&quot;fIsFromMainTab&quot;:false,&quot;fPath&quot;:&quot;Debug/HCU_V2_CM4.elf&quot;,&quot;fProjectName&quot;:&quot;HCU_V2_CM4&quot;,&quot;fUseActiveBuildConfig&quot;:true,&quot;fPerformBuild&quot;:true,&quot;fDownload&quot;:true,&quot;fLoadSymbols&quot;:false},{&quot;fIsFromMainTab&quot;:true,&quot;fPath&quot;:&quot;Debug/HCU_V2_CM7.elf&quot;,&quot;fProjectName&quot;:&quot;HCU_V2_CM7&quot;,&quot;fPerformBuild&quot;:true,&quot;fDownload&quot;:true,&quot;fLoadSymbols&quot;:true}]}"/>
     <intAttribute key="com.st.stm32cube.ide.mcu.debug.launch.mode" value="0"/>
     <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.launch.multi_drop_enabled" value="false"/>
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.launch.override_start_address_mode" value="default"/>
@@ -77,7 +77,7 @@
     <stringAttribute key="org.eclipse.cdt.launch.PROGRAM_NAME" value="Debug/HCU_V2_CM7.elf"/>
     <stringAttribute key="org.eclipse.cdt.launch.PROJECT_ATTR" value="HCU_V2_CM7"/>
     <booleanAttribute key="org.eclipse.cdt.launch.PROJECT_BUILD_CONFIG_AUTO_ATTR" value="true"/>
-    <stringAttribute key="org.eclipse.cdt.launch.PROJECT_BUILD_CONFIG_ID_ATTR" value="com.st.stm32cube.ide.mcu.gnu.managedbuild.config.exe.debug.2031554011"/>
+    <stringAttribute key="org.eclipse.cdt.launch.PROJECT_BUILD_CONFIG_ID_ATTR" value=""/>
     <booleanAttribute key="org.eclipse.debug.core.ATTR_FORCE_SYSTEM_CONSOLE_ENCODING" value="false"/>
     <listAttribute key="org.eclipse.debug.core.MAPPED_RESOURCE_PATHS">
         <listEntry value="/HCU_V2_CM7"/>

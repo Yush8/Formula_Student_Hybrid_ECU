@@ -29,7 +29,10 @@
       "Bash(rm -f .project.bak)",
       "Bash(awk '/<link>/{i=1} i&&/<name>/{gsub\\(/.*<name>|<\\\\/name>.*/,\"\"\\);n=$0} i&&/<type>/{gsub\\(/.*<type>|<\\\\/type>.*/,\"\"\\);t=$0} i&&/<\\\\/link>/{printf \"type=%s %s\\\\n\",t,n; i=0}' .project.known-good)",
       "PowerShell(gh --version)",
-      "PowerShell(Test-Path .gitignore; \"---\"; Get-ChildItem -Directory CM4,CM7 -Force -ErrorAction SilentlyContinue | Select-Object FullName; \"---size---\"; \"{0:N1} MB\" -f \\(\\(Get-ChildItem -Recurse -File -Force | Measure-Object Length -Sum\\).Sum/1MB\\))"
+      "PowerShell(Test-Path .gitignore; \"---\"; Get-ChildItem -Directory CM4,CM7 -Force -ErrorAction SilentlyContinue | Select-Object FullName; \"---size---\"; \"{0:N1} MB\" -f \\(\\(Get-ChildItem -Recurse -File -Force | Measure-Object Length -Sum\\).Sum/1MB\\))",
+      "Bash(cp .project.known-good .project)",
+      "Bash(rm -rf Debug)",
+      "WebSearch"
     ]
   }
 }

@@ -9,6 +9,7 @@
 #include "console.h"
 #include "usbd_cdc_if.h"   /* CDC_Read(), CDC_Transmit_FS(), USBD_BUSY */
 #include "params.h"        /* the parameter store this console drives */
+#include "clock.h"         /* Clock_Set()/Clock_Format() for the `time` command */
 #include "main.h"          /* HAL_GetTick() */
 #include <string.h>
 #include <stdio.h>
@@ -65,6 +66,8 @@ static void process_line(char *s)
                       "  set <name> <val> change one (RAM, live)\r\n"
                       "  save             write current values to flash\r\n"
                       "  defaults         reset to built-in defaults (RAM)\r\n"
+                      "  time             show RTC wall-clock\r\n"
+                      "  time set <d> <t> set clock: YYYY-MM-DD HH:MM:SS\r\n"
                       "  ping             link check\r\n");
 
     } else if (strcmp(cmd, "ping") == 0) {
@@ -105,6 +108,31 @@ static void process_line(char *s)
     } else if (strcmp(cmd, "defaults") == 0) {
         Params_LoadDefaults();
         Console_Print("defaults loaded (use 'save' to keep them)\r\n");
+
+    } else if (strcmp(cmd, "time") == 0) {
+        char *sub = strtok(NULL, " ");
+        if (!sub) {                                  /* "time" -> show */
+            char ts[24];
+            Clock_Format(ts, sizeof(ts));
+            Console_Printf("%s\r\n", ts);
+        } else if (strcmp(sub, "set") == 0) {        /* "time set YYYY-MM-DD HH:MM:SS" */
+            char *date = strtok(NULL, " ");
+            char *tod  = strtok(NULL, " ");
+            int y, mo, da, h, mi, s;
+            if (!date || !tod) {
+                Console_Print("usage: time set YYYY-MM-DD HH:MM:SS\r\n");
+            } else if (sscanf(date, "%d-%d-%d", &y, &mo, &da) == 3 &&
+                       sscanf(tod,  "%d:%d:%d", &h, &mi, &s) == 3 &&
+                       Clock_Set(y, mo, da, h, mi, s)) {
+                char ts[24];
+                Clock_Format(ts, sizeof(ts));
+                Console_Printf("time set: %s\r\n", ts);
+            } else {
+                Console_Print("bad time (use YYYY-MM-DD HH:MM:SS, year 2000-2099)\r\n");
+            }
+        } else {
+            Console_Print("usage: time | time set YYYY-MM-DD HH:MM:SS\r\n");
+        }
 
     } else {
         Console_Printf("unknown command: %s  (try 'help')\r\n", cmd);

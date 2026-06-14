@@ -301,111 +301,57 @@ void HAL_FDCAN_MspDeInit(FDCAN_HandleTypeDef* hfdcan)
 }
 
 /**
-  * @brief SD MSP Initialization
+  * @brief RTC MSP Initialization
   * This function configures the hardware resources used in this example
-  * @param hsd: SD handle pointer
+  * @param hrtc: RTC handle pointer
   * @retval None
   */
-void HAL_SD_MspInit(SD_HandleTypeDef* hsd)
+void HAL_RTC_MspInit(RTC_HandleTypeDef* hrtc)
 {
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
   RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
-  if(hsd->Instance==SDMMC2)
+  if(hrtc->Instance==RTC)
   {
-    /* USER CODE BEGIN SDMMC2_MspInit 0 */
+    /* USER CODE BEGIN RTC_MspInit 0 */
 
-    /* USER CODE END SDMMC2_MspInit 0 */
+    /* USER CODE END RTC_MspInit 0 */
 
   /** Initializes the peripherals clock
   */
-    PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_SDMMC;
-    PeriphClkInitStruct.SdmmcClockSelection = RCC_SDMMCCLKSOURCE_PLL;
+    PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_RTC;
+    PeriphClkInitStruct.RTCClockSelection = RCC_RTCCLKSOURCE_LSE;
     if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
     {
       Error_Handler();
     }
 
     /* Peripheral clock enable */
-    __HAL_RCC_SDMMC2_CLK_ENABLE();
+    __HAL_RCC_RTC_ENABLE();
+    /* USER CODE BEGIN RTC_MspInit 1 */
 
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-    __HAL_RCC_GPIOD_CLK_ENABLE();
-    __HAL_RCC_GPIOG_CLK_ENABLE();
-    /**SDMMC2 GPIO Configuration
-    PB14     ------> SDMMC2_D0
-    PB15     ------> SDMMC2_D1
-    PD6     ------> SDMMC2_CK
-    PD7     ------> SDMMC2_CMD
-    PG11     ------> SDMMC2_D2
-    PB4 (NJTRST)     ------> SDMMC2_D3
-    */
-    GPIO_InitStruct.Pin = GPIO_PIN_14|GPIO_PIN_15|GPIO_PIN_4;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-    GPIO_InitStruct.Alternate = GPIO_AF9_SDIO2;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_7;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-    GPIO_InitStruct.Alternate = GPIO_AF11_SDIO2;
-    HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = GPIO_PIN_11;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-    GPIO_InitStruct.Alternate = GPIO_AF10_SDIO2;
-    HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
-
-    /* SDMMC2 interrupt Init */
-    HAL_NVIC_SetPriority(SDMMC2_IRQn, 0, 0);
-    HAL_NVIC_EnableIRQ(SDMMC2_IRQn);
-    /* USER CODE BEGIN SDMMC2_MspInit 1 */
-
-    /* USER CODE END SDMMC2_MspInit 1 */
+    /* USER CODE END RTC_MspInit 1 */
 
   }
 
 }
 
 /**
-  * @brief SD MSP De-Initialization
+  * @brief RTC MSP De-Initialization
   * This function freeze the hardware resources used in this example
-  * @param hsd: SD handle pointer
+  * @param hrtc: RTC handle pointer
   * @retval None
   */
-void HAL_SD_MspDeInit(SD_HandleTypeDef* hsd)
+void HAL_RTC_MspDeInit(RTC_HandleTypeDef* hrtc)
 {
-  if(hsd->Instance==SDMMC2)
+  if(hrtc->Instance==RTC)
   {
-    /* USER CODE BEGIN SDMMC2_MspDeInit 0 */
+    /* USER CODE BEGIN RTC_MspDeInit 0 */
 
-    /* USER CODE END SDMMC2_MspDeInit 0 */
+    /* USER CODE END RTC_MspDeInit 0 */
     /* Peripheral clock disable */
-    __HAL_RCC_SDMMC2_CLK_DISABLE();
+    __HAL_RCC_RTC_DISABLE();
+    /* USER CODE BEGIN RTC_MspDeInit 1 */
 
-    /**SDMMC2 GPIO Configuration
-    PB14     ------> SDMMC2_D0
-    PB15     ------> SDMMC2_D1
-    PD6     ------> SDMMC2_CK
-    PD7     ------> SDMMC2_CMD
-    PG11     ------> SDMMC2_D2
-    PB4 (NJTRST)     ------> SDMMC2_D3
-    */
-    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_14|GPIO_PIN_15|GPIO_PIN_4);
-
-    HAL_GPIO_DeInit(GPIOD, GPIO_PIN_6|GPIO_PIN_7);
-
-    HAL_GPIO_DeInit(GPIOG, GPIO_PIN_11);
-
-    /* SDMMC2 interrupt DeInit */
-    HAL_NVIC_DisableIRQ(SDMMC2_IRQn);
-    /* USER CODE BEGIN SDMMC2_MspDeInit 1 */
-
-    /* USER CODE END SDMMC2_MspDeInit 1 */
+    /* USER CODE END RTC_MspDeInit 1 */
   }
 
 }

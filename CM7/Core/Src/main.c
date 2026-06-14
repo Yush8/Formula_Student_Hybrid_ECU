@@ -18,12 +18,10 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "fatfs.h"
 #include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "fatfs.h"
 #include <string.h>
 #include <stdio.h>
 #include "usbd_cdc_if.h"
@@ -32,6 +30,8 @@
 #include "params.h"
 #include "can.h"
 #include "scheduler.h"
+#include "logger.h"
+#include "clock.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -66,7 +66,7 @@ ADC_HandleTypeDef hadc1;
 FDCAN_HandleTypeDef hfdcan1;
 FDCAN_HandleTypeDef hfdcan2;
 
-SD_HandleTypeDef hsd2;
+RTC_HandleTypeDef hrtc;
 
 SPI_HandleTypeDef hspi3;
 
@@ -75,15 +75,7 @@ TIM_HandleTypeDef htim6;
 UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
-/* volatile uint8_t can_last_data[8] = {0};  <-- your existing line, leave it */
-static char     logLine[64];
-static uint8_t  sdReady    = 0;
-static uint32_t lastLogTick = 0;
 
-volatile FRESULT  fr_mount, fr_open, fr_write, fr_sync, fr_close, fr_read;
-volatile uint32_t writeCount = 0, sdBytesWritten = 0;
-volatile uint8_t  selfTestPassed = 0;
-static   char     rdbuf[64];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -96,8 +88,8 @@ static void MX_ADC1_Init(void);
 static void MX_FDCAN1_Init(void);
 static void MX_FDCAN2_Init(void);
 static void MX_USART3_UART_Init(void);
-static void MX_SDMMC2_SD_Init(void);
 static void MX_TIM6_Init(void);
+static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -164,10 +156,10 @@ HAL_HSEM_Release(HSEM_ID_0,0);
 /* wait until CPU2 wakes up from stop mode */
 timeout = 0xFFFF;
 while((__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) == RESET) && (timeout-- > 0));
-if ( timeout < 0 )
-{
-Error_Handler();
-}
+//if ( timeout < 0 )
+//{
+//Error_Handler();
+//}
 #endif /* DUAL_CORE_BOOT_SYNC_SEQUENCE */
 /* USER CODE END Boot_Mode_Sequence_2 */
 
@@ -182,52 +174,16 @@ Error_Handler();
   MX_FDCAN1_Init();
   MX_FDCAN2_Init();
   MX_USART3_UART_Init();
-  MX_SDMMC2_SD_Init();
-  MX_FATFS_Init();
   MX_USB_DEVICE_Init();
   MX_TIM6_Init();
+  MX_RTC_Init();
   /* USER CODE BEGIN 2 */
-  /* ---- SD self-test: write a file, close it, read it back ---- */
-  fr_mount = f_mount(&SDFatFS, SDPath, 1);
-  if (fr_mount == FR_OK)
-  {
-      fr_open = f_open(&SDFile, "SDTEST.TXT", FA_CREATE_ALWAYS | FA_WRITE);
-      if (fr_open == FR_OK)
-      {
-          UINT bw = 0;
-          const char msg[] = "SD write OK\r\n";
-          fr_write = f_write(&SDFile, msg, sizeof(msg) - 1U, &bw);
-          sdBytesWritten = bw;
-          fr_close = f_close(&SDFile);             /* close fully commits dir entry */
-
-          if (f_open(&SDFile, "SDTEST.TXT", FA_READ) == FR_OK)
-          {
-              UINT br = 0;
-              fr_read = f_read(&SDFile, rdbuf, sizeof(rdbuf) - 1U, &br);
-              rdbuf[br] = 0;
-              f_close(&SDFile);
-              if (fr_read == FR_OK && br == sizeof(msg) - 1U) selfTestPassed = 1;
-          }
-      }
-  }
-  /* <-- put a breakpoint on THIS line and read the fr_* vars + selfTestPassed */
-
-  if (selfTestPassed)            /* only start logging if the path actually works */
-  {
-      if (f_open(&SDFile, "CANLOG.CSV", FA_CREATE_ALWAYS | FA_WRITE) == FR_OK)
-      {
-          UINT bw;
-          const char hdr[] = "tick_ms,b0,b1,b2,b3,b4,b5,b6,b7\r\n";
-          f_write(&SDFile, hdr, sizeof(hdr) - 1U, &bw);
-          f_sync(&SDFile);
-          sdReady = 1;
-      }
-  }
-
   Params_Init();     /* load saved config from flash, or fall back to defaults */
   Console_Init();
   Can_Init();
   Model_Init();
+  Log_Init();        /* set up the CM4 SD-log ring before the first Model_Step writes to it */
+  Clock_Init();      /* seed RTC from build time + publish datetime to the IPC (after Log_Init) */
   Sched_Init();      /* start the 100 Hz model-step time base (TIM6) - must be last */
   /* USER CODE END 2 */
 
@@ -242,6 +198,7 @@ Error_Handler();
 
 	Console_Poll();
 	Can_Service();                   /* bus-off watchdog + rate-limited restart */
+	Clock_Service();                 /* republish RTC datetime to the IPC (~1 Hz, rate-limited) */
 
 	if (Sched_StepDue()) {           /* exact 100 Hz tick from TIM6 (see scheduler.h) */
 		Model_Step();
@@ -271,12 +228,18 @@ void SystemClock_Config(void)
 
   while(!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {}
 
+  /** Configure LSE Drive Capability
+  */
+  HAL_PWR_EnableBkUpAccess();
+  __HAL_RCC_LSEDRIVE_CONFIG(RCC_LSEDRIVE_LOW);
+
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48|RCC_OSCILLATORTYPE_HSI
-                              |RCC_OSCILLATORTYPE_HSE;
+                              |RCC_OSCILLATORTYPE_HSE|RCC_OSCILLATORTYPE_LSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_BYPASS;
+  RCC_OscInitStruct.LSEState = RCC_LSE_ON;
   RCC_OscInitStruct.HSIState = RCC_HSI_DIV1;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.HSI48State = RCC_HSI48_ON;
@@ -526,33 +489,66 @@ static void MX_FDCAN2_Init(void)
 }
 
 /**
-  * @brief SDMMC2 Initialization Function
+  * @brief RTC Initialization Function
   * @param None
   * @retval None
   */
-static void MX_SDMMC2_SD_Init(void)
+static void MX_RTC_Init(void)
 {
 
-  /* USER CODE BEGIN SDMMC2_Init 0 */
+  /* USER CODE BEGIN RTC_Init 0 */
 
-  /* USER CODE END SDMMC2_Init 0 */
+  /* USER CODE END RTC_Init 0 */
 
-  /* USER CODE BEGIN SDMMC2_Init 1 */
+  RTC_TimeTypeDef sTime = {0};
+  RTC_DateTypeDef sDate = {0};
 
-  /* USER CODE END SDMMC2_Init 1 */
-  hsd2.Instance = SDMMC2;
-  hsd2.Init.ClockEdge = SDMMC_CLOCK_EDGE_RISING;
-  hsd2.Init.ClockPowerSave = SDMMC_CLOCK_POWER_SAVE_DISABLE;
-  hsd2.Init.BusWide = SDMMC_BUS_WIDE_4B;
-  hsd2.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_ENABLE;
-  hsd2.Init.ClockDiv = 2;
-  if (HAL_SD_Init(&hsd2) != HAL_OK)
+  /* USER CODE BEGIN RTC_Init 1 */
+
+  /* USER CODE END RTC_Init 1 */
+
+  /** Initialize RTC Only
+  */
+  hrtc.Instance = RTC;
+  hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
+  hrtc.Init.AsynchPrediv = 127;
+  hrtc.Init.SynchPrediv = 255;
+  hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+  hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+  hrtc.Init.OutPutRemap = RTC_OUTPUT_REMAP_NONE;
+  if (HAL_RTC_Init(&hrtc) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN SDMMC2_Init 2 */
 
-  /* USER CODE END SDMMC2_Init 2 */
+  /* USER CODE BEGIN Check_RTC_BKUP */
+
+  /* USER CODE END Check_RTC_BKUP */
+
+  /** Initialize RTC and set the Time and Date
+  */
+  sTime.Hours = 0x0;
+  sTime.Minutes = 0x0;
+  sTime.Seconds = 0x0;
+  sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
+  sTime.StoreOperation = RTC_STOREOPERATION_RESET;
+  if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BCD) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sDate.WeekDay = RTC_WEEKDAY_MONDAY;
+  sDate.Month = RTC_MONTH_JANUARY;
+  sDate.Date = 0x1;
+  sDate.Year = 0x0;
+
+  if (HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BCD) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN RTC_Init 2 */
+
+  /* USER CODE END RTC_Init 2 */
 
 }
 
@@ -708,7 +704,6 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
-  __HAL_RCC_GPIOG_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOE, AIR_LED_Pin|Precharge_LED_Pin|SDC_Monitor_LED_Pin|MCU_Active_Pin, GPIO_PIN_SET);

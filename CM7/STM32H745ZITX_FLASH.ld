@@ -177,6 +177,23 @@ SECTIONS
     . = ALIGN(8);
   } >RAM_D1
 
+  /* ---- Inter-core shared RAM (HCU IPC) -------------------------------------
+   * The CM7<->CM4 contract (g_hcu_ipc) lives at a fixed address in D3 SRAM4
+   * (0x38000000), the one RAM both cores address identically. NOLOAD: startup
+   * neither loads nor zeroes it, so the producer (Log_Init) owns its setup and
+   * a CM4 reset can't wipe what CM7 placed. Hand-managed - CubeMX does not
+   * generate cross-core sections. MUST mirror CM4's linker script. See
+   * Shared/hcu_ipc.h and HANDOFF section 16. */
+  .shared_ram (NOLOAD) :
+  {
+    . = ALIGN(4);
+    _sshared_ram = .;
+    KEEP(*(.shared_ram))
+    KEEP(*(.shared_ram*))
+    . = ALIGN(4);
+    _eshared_ram = .;
+  } >RAM_D3
+
   /* Remove information from the compiler libraries */
   /DISCARD/ :
   {

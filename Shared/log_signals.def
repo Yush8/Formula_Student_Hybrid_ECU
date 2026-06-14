@@ -1,0 +1,55 @@
+/*
+ * log_signals.def  --  WHICH SIGNALS GET LOGGED TO THE SD CARD
+ *
+ *  >>>>>>  THIS IS THE ONE FILE YOU EDIT TO CHANGE WHAT IS LOGGED.  <<<<<<
+ *  No C knowledge needed. Same idea as can1_messages.def is for CAN: add one
+ *  line per signal and EVERYTHING else (the on-card record layout, the firmware
+ *  that fills it on both cores, and the Python decoder) follows automatically,
+ *  so they can never drift out of sync.
+ *
+ *  Every record saved to the card is:   [ tick ]  +  the signals you list below.
+ *  `tick` is added for you (the 100 Hz / 10 ms model-step counter = your time
+ *  axis). You just list the model signals you care about, one per line.
+ *
+ *  ---------------------------------------------------------------------------
+ *  TO ADD A SIGNAL  (one line):
+ *
+ *     A model OUTPUT  (a root Outport in Simulink, i.e. a field of _Y):
+ *           LOG_Y( <type>, <PortName> )
+ *
+ *     A model INPUT   (a root Inport in Simulink, i.e. a field of _U):
+ *           LOG_U( <type>, <PortName> )
+ *
+ *     <PortName>  must be spelled EXACTLY like the Simulink port.
+ *     <type>      is the C type matching the Simulink data type:
+ *
+ *           Simulink data type        <type>
+ *           ------------------        --------------
+ *           boolean                   uint8_t
+ *           uint8   /  int8           uint8_t  / int8_t
+ *           uint16  /  int16          uint16_t / int16_t
+ *           uint32  /  int32          uint32_t / int32_t
+ *           single                    float
+ *
+ *     Example - log an Outport "Torque_Cmd" that is a Simulink 'single':
+ *           LOG_Y( float, Torque_Cmd )
+ *
+ *  After editing: rebuild BOTH cores (CM7 and CM4). That's it. The column shows
+ *  up in the decoded CSV automatically, labelled with the port name.
+ *  ---------------------------------------------------------------------------
+ *
+ *  Rules / notes:
+ *   - No semicolon, no comma at the end of the line (just like CAN_MSG).
+ *   - Scalars only here. (Arrays / 8-byte CAN payloads need a LOG_ARRAY macro -
+ *     ask and it's a 5-minute add.)
+ *   - Each <PortName> must be unique in this list (it becomes a field name).
+ *   - Keep it sensible: 256 of these records must fit the ring (a few KB).
+ *   - Optional: bump HCU_IPC_VERSION in hcu_ipc.h to tag a new layout.
+ */
+
+/*       type        Simulink port name   */
+LOG_Y(  uint8_t,   User_LED_1 )
+LOG_Y(  uint8_t,   User_LED_2 )
+LOG_Y(  uint8_t,   User_LED_3 )
+LOG_U(  uint8_t,   bus1_ok    )
+LOG_U(  uint8_t,   bus2_ok    )

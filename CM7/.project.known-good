@@ -40,11 +40,6 @@
 			<location>C:/Users/Yusha/Documents/Formula Student/Hybrid Code/HCU_V2/Drivers/STM32H7xx_HAL_Driver/Src</location>
 		</link>
 		<link>
-			<name>Middlewares/Third_Party/FatFs/src</name>
-			<type>2</type>
-			<location>C:/Users/Yusha/Documents/Formula Student/Hybrid Code/HCU_V2/Middlewares/Third_Party/FatFs/src</location>
-		</link>
-		<link>
 			<name>Middlewares/ST/STM32_USB_Device_Library/Core/Src</name>
 			<type>2</type>
 			<location>C:/Users/Yusha/Documents/Formula Student/Hybrid Code/HCU_V2/Middlewares/ST/STM32_USB_Device_Library/Core/Src</location>

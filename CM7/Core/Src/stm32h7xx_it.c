@@ -58,7 +58,6 @@
 extern PCD_HandleTypeDef hpcd_USB_OTG_FS;
 extern FDCAN_HandleTypeDef hfdcan1;
 extern FDCAN_HandleTypeDef hfdcan2;
-extern SD_HandleTypeDef hsd2;
 extern TIM_HandleTypeDef htim6;
 /* USER CODE BEGIN EV */
 
@@ -256,20 +255,6 @@ void OTG_FS_IRQHandler(void)
   /* USER CODE BEGIN OTG_FS_IRQn 1 */
 
   /* USER CODE END OTG_FS_IRQn 1 */
-}
-
-/**
-  * @brief This function handles SDMMC2 global interrupt.
-  */
-void SDMMC2_IRQHandler(void)
-{
-  /* USER CODE BEGIN SDMMC2_IRQn 0 */
-
-  /* USER CODE END SDMMC2_IRQn 0 */
-  HAL_SD_IRQHandler(&hsd2);
-  /* USER CODE BEGIN SDMMC2_IRQn 1 */
-
-  /* USER CODE END SDMMC2_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */

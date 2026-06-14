@@ -21,6 +21,9 @@ Thumbs.db
 *.bak
 *.tmp
 
+# Captured SD-card data logs
+LOG*.csv
+
 # Python (ConfigGUI)
 __pycache__/
 *.pyc

@@ -6,7 +6,7 @@ before asking for a feature, so it follows the established conventions.
 ## 1. Target
 - **MCU:** STM32H745ZIT3, dual-core (CM7 + CM4), 2 MB dual-bank flash.
 - **Clock:** VOS2 ceiling (~300 MHz on M7), **not** 480. HSE = 25 MHz **BYPASS** (MEMS osc); LSE = 32.768 kHz crystal.
-- **All firmware is on CM7.** CM4 is the untouched generated stub — leave its HSEM boot handshake alone. Every pin/peripheral must be assigned to the **CM7 context** in CubeMX or no init is generated.
+- **Control firmware is on CM7; CM4 hosts SD logging (DONE & verified — see §16).** CM4 is no longer an empty stub. Its HSEM boot handshake must still be left intact (CM7 releases CM4 via HSEM at boot). Control-loop peripherals are assigned to the **CM7 context** in CubeMX; the logging peripherals (SDMMC2 + FatFs) are assigned to the **CM4 context**. A pin/peripheral with no context assignment generates no init.
 - **Toolchain:** STM32CubeIDE 2.1.1 + standalone CubeMX. Two sub-projects share one `.ioc`; all work is in `HCU_V2_CM7`.
 
 ## 2. Core philosophy
@@ -120,9 +120,9 @@ USB_OTG_FS, Device, Full Speed, behind an ADuM4160 isolator. DP/DM = PA12/PA11. 
 5. **SD config mirror.** Human-readable `key value` export/import on microSD (reuse the console `set` parser); git-track setups per session.
 6. **Console diagnostics (`stat`).** Loop rate, overrun count, `g_can_stats` (per-bus rx-lost/recoveries/last-seen), free stack — trackside without a debugger.
 7. **Composite USB CDC + MSC (later).** Pull SD logs without removing the card.
-8. **Dual-core split (later).** CM7 = control loop, CM4 = comms/logging, IPC via HSEM + shared SRAM.
+8. **Dual-core split — DONE & verified (see §16).** CM7 = control loop, CM4 = SD logging, IPC via a lock-free ring in shared SRAM. Scoped to logging only (wheel-speed dropped, so CM4 carries nothing else). End-to-end working: card yields `LOGxxxx.BIN` → CSV. Remaining polish (live CM4 debug, `g_sched_overruns==0` confirmation, no-card-at-boot robustness) tracked in §16.6.
 
-**Peripherals still to bring up through the bridge:** SDMMC2 + FatFS (logging; an SD self-test currently sits in `main.c` USER CODE 2 — to be removed), SPI3 (ASM330LHHX IMU + INT), ADC (10k NTC thermistor), Timers/EXTI (2× opto-isolated wheel-speed), the SDC/AIR/precharge safety subsystem (highest rigour).
+**Peripherals still to bring up through the bridge (CM7):** SPI3 (ASM330LHHX IMU + INT), ADC (10k NTC thermistor), the SDC/AIR/precharge safety subsystem (highest rigour). *(SDMMC2 + FatFS have been reassigned to the CM4 context for logging — no longer a CM7/bridge concern; the old `main.c` SD self-test has been removed. See §16. Wheel-speed timers TIM2/TIM5 were freed — not used on this year's car.)*
 
 ## 15. Scheduler / model time base (DONE)
 `scheduler.c/.h` — the deterministic metronome for the control loop. Replaced the old `HAL_GetTick` rate limiter.
@@ -133,3 +133,114 @@ USB_OTG_FS, Device, Full Speed, behind an ADuM4160 isolator. DP/DM = PA12/PA11. 
 - **Rate must match in three places:** Simulink fixed-step (`0.01 s`), the CubeMX TIM6 Counter Period, and `SCHED_RATE_HZ` in `scheduler.h` (currently `100`). Changing the base rate is rare; day to day you touch none of it.
 - **Run-latest, no catch-up.** If the loop falls behind, `Sched_StepDue()` returns true once and counts the skipped ticks in `g_sched_overruns` — it never bursts steps to catch up (that would compress time, wrong for control). `g_sched_overruns == 0` means every deadline was met. Debug-only global, **not** fed to the model (same policy as `g_can_stats`); destined for the `stat` command (roadmap 6).
 - **Wiring (`main.c`, all in USER CODE):** `Sched_Init()` runs last in `USER CODE BEGIN 2` (after `Model_Init()`, so the model is ready before the first tick) and just calls `HAL_TIM_Base_Start_IT(&htim6)`; superloop is `Console_Poll(); Can_Service(); if (Sched_StepDue()) Model_Step();`.
+
+## 16. SD logging on CM4 (dual-core split) — DONE & VERIFIED (polish remaining, see §16.6)
+
+The plan for SDMMC2/microSD logging. **CM4 owns logging; the CM7 control loop never touches the SD card.** This is roadmap item 8, scoped to logging only. A fresh chat should read this whole section before writing any logging code.
+
+### 16.1 Why dual-core (the timing rationale — don't undo this)
+The control loop is a hard 100 Hz = **10 ms budget** per tick (TIM6 → `Sched_StepDue()`, §15). SD cards stall unpredictably on internal flush/GC — **tens to ~250 ms** worst case on cheap cards. A blocking `f_write`/`f_sync` anywhere in the cooperative CM7 superloop (or in `Model_Step()`) would blow ticks and pile up `g_sched_overruns`. FatFs is **synchronous by design** (the diskio layer busy-waits on card-ready), so on a single core you *cannot* make a write both synchronous and non-blocking. Moving SD to CM4 gives the control loop a **hard timing guarantee**: a card stall can never cost a control tick. The independent AIR fail-safe (roadmap 2) remains the safety net for any stall.
+
+### 16.2 Decisions locked (with the user, this session)
+- **CM4 = logging only.** Wheel-speed is dropped for this year's car, so CM4's TIM2/TIM5 input-capture timers were **freed** in the `.ioc`; CM4 carries no other load. USB console + the occasional flash `save` stay on CM7 (both bounded; `save` is stationary-only). The only *unbounded* CM7 stall source was the SD write — that's the whole reason it moves.
+- **Record format: fixed-size BINARY records, versioned header.** Payload = **selected model signals** (`HCU_V2_Simulink_Y`/`_U` fields), tapped one line in the bridge dispatch. Decoded off-target in Python (reuse `hcu_console.py` infra). Efficient, sector-aligned, matches "C is the postman". The version header makes the field set trivially extensible.
+- **Trigger: continuous from boot.** Size-based file rotation.
+- **Time: RTC on LSE, but NO VBAT backup → it resets every power cycle.** CM7 owns the RTC and **publishes the current datetime into the shared IPC struct each second**; CM4 reads it from shared RAM for `get_fattime()` + the file header (CM4 never touches the RTC peripheral). **Filenames use a sequence counter** (`LOGxxxx.BIN`, scan card for next free index) as the collision-proof primary key — robust regardless of the clock; the datetime is embedded in the header only. Boot default = firmware build time; console gains a **`time set …`** command to set wall-clock at session start. Possible future: auto-set the RTC from a CAN time message if one exists on the bus.
+
+### 16.3 Architecture
+- **The inter-core contract = one shared header `Shared/hcu_ipc.h`, included by BOTH cores** — single source of truth, same anti-desync philosophy as the CAN `.def` X-macros (§13). It defines a struct placed at a **fixed address in D3 SRAM4 (`0x38000000`)**, which both cores address at the *same* physical address (ST dual-core convention; avoids the D2 alias mismatch between the two linker scripts — CM7 sees D2 at `0x30000000`, CM4 at `0x10000000`, so D2 is a trap for shared memory; D3 SRAM4 is not).
+- **IPC = lock-free single-producer/single-consumer (SPSC) ring.** CM7 is sole producer (writes `head`), CM4 sole consumer (writes `tail`). 32-bit-aligned head/tail, single-writer each → atomic on both cores; only `__DMB()` for ordering. **No per-record HSEM**; CM4 just polls the ring in its superloop. The existing **boot HSEM handshake is left untouched**.
+- **Cache:** D-cache is currently OFF on CM7 (no `SCB_EnableDCache` in boot) → no coherency dance today. Still **mark the shared D3 region non-cacheable via MPU on CM7** to future-proof (if caches are ever enabled). CM4 (Cortex-M4) has no cache.
+- **CM7 producer (`logger.c/.h`):** `Log_Init()` (sets up the ring view) + `Log_Write(rec)` — **one line in the bridge dispatch**, packs selected `_Y`/`_U` fields into a fixed-size binary record and drops it in the ring. Deterministic, RAM-only, no SD access. Mirrors the `Can_Send(...)` one-liner convention.
+- **CM4 consumer (`sd_logger.c`):** polling superloop drains the ring → assembles whole **512-byte sectors** in a CM4-local D2 buffer → `f_write`/`f_sync` with size-based file rotation. Mount is **attempted, not asserted** — no card ⇒ logging silently disabled, CM7 utterly unaffected ("any doubt → safe").
+- **Migration-proof seam:** `Log_Write` is the stable boundary. The bridge/model never know where the bytes go.
+
+### 16.4 Verified hardware facts (checked this session)
+- Chip is clocked at **75 MHz** (PLL: HSE 25 ÷ PLLM 4 × PLLN 24 ÷ PLLP 2), well under the VOS2 ceiling — CM4 at 75 MHz draining a ring to SD has huge headroom. (TIM6 math in §15 is consistent with this.)
+- **CM7 RAM** (`.data`/`.bss`/heap/stack) all live in **AXI SRAM `0x24000000`** (512 K). **DTCM (`0x20000000`) is unused.** This matters: **SDMMC2's internal DMA (IDMA) cannot reach DTCM** — but the buffers are in AXI SRAM, so the classic "SD works in debug, fails in release" buffer-placement trap doesn't bite. (On H7, HAL `HAL_SD_*Blocks` always use IDMA even in "blocking" mode, so the buffer-addressability rule applies regardless.)
+- **CM4 RAM** at `0x10000000` (D2 SRAM, 288 K); **CM4 FLASH** bank 2 `0x08100000`. **SDMMC2 is in the D2 domain** — same domain as CM4, so the peripheral, its IDMA, the FatFs work buffers and the consumer are all co-located. Clean locality. SDMMC kernel clock = PLL1Q 75 MHz, `ClockDiv = 2` → ~18.75 MHz SD_CK on a 4-bit bus.
+
+### 16.5 File / module plan
+- `Shared/hcu_ipc.h` — shared by both cores. The ring + record struct + fixed D3-SRAM4 placement. Reached by a **source-relative include** (`../../../Shared/...`) from each core's headers — NOT an `-I` path (CubeMX wipes those on regen).
+- **`Shared/log_signals.def`** — the user-facing "what to log" list (one `LOG_Y`/`LOG_U` line per signal). Included by `hcu_ipc.h` (generates the record) and by `model_bridge.c` (generates the packing). **This is the only file to edit to change logging.**
+- CM7: `logger.c/.h` (producer ring), `clock.c/.h` (RTC seed/publish + `time` console cmd). `g_hcu_ipc` defined in `logger.c`'s `.shared_ram`.
+- CM4: `sd_logger.c/.h` — consumer; CM4 `main.c` superloop calls `SdLog_Service()`. `g_hcu_ipc` defined here in `.shared_ram`. `fatfs.c get_fattime()` forwards to `SdLog_FatTime()`. CM4 already has SDMMC2 + FatFs from the context reassignment.
+- Off-target: **`hcu_logdecode.py`** (repo root) — decodes `LOGxxxx.BIN` → CSV by reading `log_signals.def`.
+- Both linker scripts (`CM7/STM32H745ZITX_FLASH.ld`, `CM4/STM32H745ZITX_FLASH.ld`) get a `.shared_ram` NOLOAD section at `0x38000000` — **edited by hand; CubeMX does not manage cross-core shared sections.**
+
+### 16.6 Status — done vs TODO
+**DONE this session (clean dual-core baseline; both cores build):**
+- User (CubeMX): reassigned **SDMMC2 + FatFs CM7 → CM4** context; **freed TIM2/TIM5** from CM4. (RTC not yet done.)
+- CM7 `main.c`: removed the SD self-test (old `USER CODE 2`), the bring-up PV block (`fr_*`, `selfTestPassed`, `rdbuf`, `sdReady`, …), and the duplicate `#include "fatfs.h"`. Init is now `Params → Console → Can → Model → Sched`.
+- CM7 `.project`: removed the orphan FatFs folder-link; restored the clean known-good base (4 `type=2` folder-links: Common, HAL Src, USB Core/Src, USB CDC/Src — no FatFs, no duplicate file-links).
+- CM4 `.project`: converted the four FatFs `type=1` file-links (which CDT silently refused to compile) into one `type=2` folder-link `Middlewares/Third_Party/FatFs/src`.
+- **Both `.project.known-good` snapshots refreshed/created** (CM7 updated, CM4 created). See §12 — the dual-core reload gotcha (must Close/Open the project after editing `.project`) bit hard this session; it's now in §12 and memory.
+
+**DONE & VERIFIED — Phase 1 (CM7 producer / shared ring):**
+- **`Shared/hcu_ipc.h`** (NEW) — the inter-core contract: `hcu_ipc_t` = `{magic, version, head, tail, now(datetime), ring[256]}`, the fixed `log_record_t` (seed payload: `tick`, `leds` bitfield, `bus1_ok`, `bus2_ok` — 8 B), `HCU_IPC_BASE 0x38000000`, magic/version, and `_Static_assert`s (ring power-of-two, record %4). Lock-free SPSC: CM7 writes `head`, CM4 writes `tail`, free-running counters, `__DMB()` ordering. `extern volatile hcu_ipc_t g_hcu_ipc;`.
+- **CM7 `logger.c/.h`** (NEW) — `Log_Init()` (stamps version then magic-last, clears indices) + `Log_Write(rec)` (full-ring → drop newest, never blocks). `g_hcu_ipc` is **defined here** in `__attribute__((section(".shared_ram")))`.
+- **`model_bridge.c`** — added `#include "scheduler.h"` + `"logger.h"`; the bridge dispatch now builds a `log_record_t` from `g_sched_ticks` + LED `_Y` + the `can` snapshot and calls `Log_Write(&rec)` (step "4").
+- **`main.c`** — `#include "logger.h"`; `Log_Init();` added to USER CODE 2 **between `Model_Init()` and `Sched_Init()`**.
+- **Both linker scripts** — added the `.shared_ram (NOLOAD) >RAM_D3` section (mirrored). **CM4 also needed `RAM_D3 (0x38000000, 64K)` added to its `MEMORY`** (CM7 already had it).
+- **CM7 `.cproject`** — added `../../Shared` to the **Debug** include paths (mirrors how the Model dir was added; Debug-only). `hcu_ipc.h` is **include-only** (no `.c`), so it needs no Source Location / `.project` linked-resource — sidesteps the §12 bug entirely.
+- **Deferred (deliberately):** the optional MPU non-cacheable region for the ring. D-cache is OFF on CM7 and the M4 has none, so it isn't needed now; `MPU_Config()` is generated code with no USER CODE marker, so when D-cache is enabled, add the region via **CubeMX** (Cortex-M7 → MPU) so it survives regen — don't hand-edit `MPU_Config()`.
+- **BUILT + VERIFIED.** CM7 builds/links/flashes; in the debugger `g_hcu_ipc` sits at `0x38000000` with `magic=0x48435531 ("HCU1")`, `version=1`, and `head` climbs `0→256` then parks (ring full, drop-newest, nothing draining) — exactly the designed Phase-1 behaviour. `now.*` shows uninitialised SRAM with `valid=0` (expected: NOLOAD region, Log_Init only clears seq/valid). The `../../Shared` include path got wiped on the later RTC regen, so `logger.h` was switched to a **source-relative include** (`#include "../../../Shared/hcu_ipc.h"`) — regen-proof, no project-setting upkeep. CM4 mirrors this in `sd_logger.h`.
+
+**DONE — Phase 2 (CubeMX, RTC on LSE @ CM7 context):**
+- User regenerated with **RTC activated on the CM7 context**, clock source **LSE**, 24h, predividers 127/255 (1 Hz). `MX_RTC_Init()` + `hrtc` now in CM7 `main.c`; `SystemClock_Config` gained `LSEState=RCC_LSE_ON` + `HAL_PWR_EnableBkUpAccess`. §3 must-not-break all survived (SMPS, VOS2, HSE BYPASS).
+- **The §12 dance hit BOTH cores this regen** (not just CM7): CM7 `.project` got HAL+USB `type=1` duplicate file-links (→ 779 "multiple definition"), and CM4 `.project` got the 4 stray FatFs file-links (`diskio/ff/ff_gen_drv/syscall`) next to its `FatFs/src` folder-link. Fixed by restoring **both** `.project.known-good` + deleting **both** `Debug/` + Close/Open each project. CM4's known-good legitimately uses 24 per-file HAL `type=1` links (the M4 subset) — that is NOT corruption; the 4 FatFs strays were. Build clean after restore.
+- **Standing rule (now proven on both cores):** every CubeMX *Generate Code* can re-corrupt **CM7 *and* CM4** `.project`. After any regen: restore both known-goods → delete both `Debug/` → Close/Open both projects → build. Known-goods need no update for RTC (CM7 HAL is a folder-link that already covers `rtc.c`; CM4 doesn't use RTC).
+
+**DONE & VERIFIED — Phase 3 (time + CM4 consumer):**
+- **CM7 `clock.c/.h`** (NEW) — `Clock_Init()` seeds the RTC from the firmware **build time** (`__DATE__`/`__TIME__`, overriding MX_RTC_Init's 2000-01-01), `Clock_Service()` republishes the datetime to `g_hcu_ipc.now` at ~1 Hz via a **seqlock writer**, `Clock_Set()`/`Clock_Format()` back the console. Wired in `main.c`: `Clock_Init()` after `Log_Init()`, `Clock_Service()` in the superloop.
+- **CM7 `console.c`** — `time` (show) and `time set YYYY-MM-DD HH:MM:SS` (validate→`Clock_Set`). Parsed with `sscanf` (integer; newlib-nano-safe).
+- **CM4 `sd_logger.c/.h`** (NEW) — defines its own `g_hcu_ipc` in `.shared_ram`; `SdLog_Init()` best-effort `f_mount` (retries in service if no card), `SdLog_Service()` drains the ring → 512 B sector buffer → `f_write`, `f_sync` ~1 Hz, size-based rotation to `LOGxxxx.BIN` (via `FA_CREATE_NEW`, no `f_stat` dep; 8.3-safe since `_USE_LFN=0`). Boot-race guard: ignores the ring until CM7 has stamped `magic`/`version`. `SdLog_FatTime()` packs the shared clock; **`fatfs.c get_fattime()`** forwards to it (and `fatfs.h` USER-CODE-includes `sd_logger.h`). Wired in CM4 `main.c` USER CODE 2/3.
+- On-disk format: 16-byte `sdlog_header_t` (`magic 'HDLG'`, `version=HCU_IPC_VERSION`, `record_size`, datetime) then a stream of fixed `log_record_t`. Decoder is Phase 4.
+
+**DONE & VERIFIED — Phase 4 (end-to-end, this session):** with the ST-Link detached and the board power-cycled (clean run from flash), the card yields `LOGxxxx.BIN` containing real data and `hcu_logdecode.py` produces a **populated CSV**. The whole pipeline works: CM7 model step → `Log_Write` → ring in D3 SRAM4 → CM4 `SdLog_Service` drains → 512 B sectors → FatFs → microSD → Python → CSV. 🎉
+- **CM4 diagnostics added** (`g_sdlog_status`, volatile global in `sd_logger.c`, watch it like `g_can_stats`): `loops` (heartbeat — climbing = CM4 alive), `mounted`, `ring_seen` (magic/version matched), `records`, `head_seen`/`tail_now`, `file_index`, `file_bytes`, `last_fr` (last FatFs error). **First thing to read when triaging the logger.** See the decision table in the session notes / `sd_logger.h`.
+
+**DONE & VERIFIED — Live CM4 debugging (was open; closed this session):** stepping/watching CM4 in the debugger works with the dual-core *order* now nailed down — see the rewritten **§16.9** and the full bench walkthrough in **`DEBUG_DUALCORE.md`** (repo root). One-line version: **Debug M7 → Debug M4 → Resume M7 → Resume M4** (the CM4 attach resets the M4, and CM7's HSEM wake is one-shot, so the release must come *after* CM4 has attached).
+
+**STILL OPEN / NOT done (pick up here):**
+1. **`g_sched_overruns == 0` under logging load — NOT yet confirmed.** This is *the* proof CM7 is isolated from SD stalls. Watch `g_sched_overruns` (CM7) over a long run that includes card flush/GC stalls; it must stay 0.
+2. **No-card-at-boot — still open (real need: the car may run with NO SD card inserted).** Today CM4 halts in `Error_Handler()` when no card is present at boot (CM7 / control loop unaffected — separate core). One fix was tried and **reverted**: making CM4's `Error_Handler()` *return* instead of halt during boot SD init. It let CM4 boot card-less but **broke normal card-present 4-bit logging** — the boot SD bring-up runs twice (`MX_SDMMC2_SD_Init`, then `f_mount`→`BSP_SD_Init`) and can't simply "fail-forward"; it left the HAL's SD handle dirty so later mounts stuck at `FR_NOT_READY`. **Approach this fresh** — diagnose first, and re-verify card-present logging still works after any change.
+3. **MPU non-cacheable region** for the shared ring — still deferred (D-cache OFF). Add via CubeMX (Cortex-M7 → MPU) if/when D-cache is enabled.
+4. **`f_expand` / pre-allocation** of the log file — not done; add only if long sessions show FAT-walk stalls (CM4-only, never touches CM7).
+5. **`LOG_ARRAY` macro** for non-scalar signals (e.g. an 8-byte CAN payload as one field) — not implemented; ~5-min add when first needed.
+6. Future nicety: auto-set the RTC from a CAN time message if one exists on the bus (removes the manual `time set`).
+
+**BUGS / CAVEATS to note:**
+- **No card at boot ⇒ CM4 halts in `Error_Handler()`** (generated `MX_SDMMC2_SD_Init` fails `HAL_SD_Init`; CM7 unaffected). See STILL-OPEN item 2 — a naive "`Error_Handler()` returns" fix was tried and reverted (it broke card-present 4-bit logging).
+- **Every CubeMX *Generate Code* re-corrupts BOTH `.project` files** (§12, proven on CM7 *and* CM4 this session). After any regen: restore both `.project.known-good` → delete both `Debug/` → Close/Open both projects → build.
+- **Card must be FAT32** (not exFAT — `_FS_EXFAT=0`) with **8.3 filenames** (`_USE_LFN=0`); `LOGxxxx.BIN` fits.
+- Records are **packed**: the 9-byte seed record makes the sector buffer flush at 504 B (56×9), not exactly 512 — harmless (FatFs re-buffers to its own 512 cache).
+- Edit `log_signals.def` → **rebuild BOTH cores** (the record layout is shared). Old logs then decode with a `record_size` mismatch warning — keep the matching `.def` (git-track it per season/config).
+
+### 16.7 Open implementation details — chosen defaults (all easily tuned)
+- **What gets logged is one file: `Shared/log_signals.def`** (X-macro list, exactly like the CAN `.def`s). Each `LOG_Y(type, PortName)` / `LOG_U(type, PortName)` line auto-generates (a) the `log_record_t` field in `hcu_ipc.h`, (b) the packing in the bridge (model_bridge.c step "4", which the user never edits), and (c) the column in the Python decoder — so they can't desync. `tick` is prepended automatically. `log_record_t` is `__attribute__((packed))` so the on-disk bytes are field-after-field (trivial/endian-clean to decode). Seeded with `User_LED_1..3` + `bus1_ok/bus2_ok`. **Adding a signal = one line + rebuild BOTH cores.** Optional `HCU_IPC_VERSION` bump tags a new layout; the file header also carries `record_size` as a cross-check.
+- **Decoder: `hcu_logdecode.py`** (repo root, stdlib only) — reads the same `log_signals.def` + the file header and emits CSV: `python hcu_logdecode.py LOG0000.BIN`. Warns if a log's `record_size` doesn't match the current `.def`.
+- **Ring size** = `HCU_LOG_RING_RECORDS` 256 (#define in hcu_ipc.h) → 256·8 B = ~2.5 s of stall headroom at 100 Hz. Tune if the record grows.
+- **Rotation** = `SDLOG_FILE_MAX_BYTES` 8 MB; **`f_sync` cadence** = `SDLOG_SYNC_MS` 1000 ms; **remount retry** = `SDLOG_REMOUNT_MS` 2000 ms (all #defines in CM4 sd_logger.c). **Pre-allocation** (`f_expand`/contiguous) not yet done — add if FAT-walk stalls show up mid-session (CM4-only, never affects CM7).
+
+### 16.8 Cross-refs
+Memory: `dual-core-logging-design.md` (the locked decisions), `cubemx-regen-project-corruption.md` (the `.project` bug, now covering both cores + the reload gotcha), `dual-core-flash-debug.md` (the flash/run/debug order + the `0xA05F0000` gotcha). Patterns reused: the bridge one-liner (§6), the `.def` X-macro "cannot desync" idea (§13), the debug-only-global policy for `g_can_stats`/`g_sched_overruns` (§13/§15).
+
+### 16.9 Dual-core flash & debug workflow (operational — verified this session)
+One chip, two cores, two flash banks: **CM7 = bank 1 `0x08000000`, CM4 = bank 2 `0x08100000`.** CM4 boots straight into STOP mode and only starts executing when **CM7 releases it via HSEM** (the boot handshake at the top of both `main.c`s — must not be removed). **Full bench walkthrough: `DEBUG_DUALCORE.md` (repo root) — the authoritative procedure; this section is the summary.**
+
+**To just RUN both (no debugger) — the reliable path:**
+1. Make sure **both banks are programmed**. Caveat: the CM4 launch has **Download = OFF** and the CM7 launch only downloads its own `.elf`, so *neither config flashes CM4 by default* — flash CM4 by adding `HCU_V2_CM4.elf` to the CM7 launch's Startup load list (Download ON / symbols OFF), or program bank 2 with STM32CubeProgrammer. Rebuild CM4 ⇒ reflash it, or you run stale code.
+2. **Detach ST-Link / power-cycle (or press RESET).** Both boot from flash, CM7 releases CM4, logging runs on its own. ✅ This is how end-to-end logging was verified.
+
+**To DEBUG (step / watch variables) — VERIFIED ORDER: `Debug M7 → Debug M4 → Resume M7 → Resume M4`.** The order is forced by two facts: (a) CM7's HSEM release is **one-shot** (runs once at boot, then CM7 sits in `while(1)`); (b) **attaching the CM4 debugger RESETS the M4** (it lands at the top of `main`, runs down into its boot STOP, and the debugger holds it there). So:
+1. Launch **CM7** debug → halts at `main`. **Do NOT resume yet.**
+2. Launch **CM4** debug → attaches, resets the M4 into its STOP. **`0xA05F0000` here is EXPECTED** — M4 parked asleep, *not* orphaned.
+3. **Resume CM7 (F8)** → fires the single HSEM release (now pending for the M4).
+4. **Resume CM4 (F8)** → M4 takes the pending wake, runs to `while(1)`; `g_sdlog_status.loops` climbs. Live.
+- **Wrong order = orphan:** resume CM7 *before* CM4 attaches and the attach-reset re-sleeps the M4 with the one-shot wake already spent → stuck at `0xA05F0000`, frozen, garbage RAM reads; only a power-cycle recovers.
+- `0xA05F0000` = "core powered down" (M4 asleep), NOT a crash. Once live in `while(1)`, normal halt/step/resume is fine — only a **reset** re-orphans the M4.
+- For clean debug also comment the **second** boot-timeout `Error_Handler()` (CM7 `main.c` ~line 159), like the first (~line 121) — harmless, debug-only.
+- Sanity: `&g_hcu_ipc` must read `0x38000000` on **both** cores (shared struct). Truth test the M4 is alive: `g_sdlog_status.loops` *incrementing*.
+
+**Triage `g_sdlog_status` (CM4) when logs don't appear:** `loops==0` → CM4 not running/flashed or stuck in `Error_Handler` (no card at boot); `loops>0 & mounted==0` → card / FAT32 / seating (read `last_fr`); `mounted==1 & ring_seen==0` → shared-RAM address mismatch; `ring_seen==1 & records` climbing → working.

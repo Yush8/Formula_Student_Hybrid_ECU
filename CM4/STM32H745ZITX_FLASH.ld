@@ -45,6 +45,7 @@ MEMORY
 {
 FLASH (rx)     : ORIGIN = 0x08100000, LENGTH = 1024K
 RAM (xrw)      : ORIGIN = 0x10000000, LENGTH = 288K
+RAM_D3 (xrw)   : ORIGIN = 0x38000000, LENGTH = 64K   /* D3 SRAM4 - shared with CM7 (HCU IPC) */
 }
 
 /* Define output sections */
@@ -162,6 +163,23 @@ SECTIONS
   } >RAM
 
 
+
+  /* ---- Inter-core shared RAM (HCU IPC) -------------------------------------
+   * The CM7<->CM4 contract (g_hcu_ipc) lives at a fixed address in D3 SRAM4
+   * (0x38000000), the one RAM both cores address identically. NOLOAD: startup
+   * neither loads nor zeroes it, so the CM7 producer owns its setup and a CM4
+   * reset can't wipe it. Hand-managed - CubeMX does not generate cross-core
+   * sections. MUST mirror CM7's linker script. See Shared/hcu_ipc.h and
+   * HANDOFF section 16. */
+  .shared_ram (NOLOAD) :
+  {
+    . = ALIGN(4);
+    _sshared_ram = .;
+    KEEP(*(.shared_ram))
+    KEEP(*(.shared_ram*))
+    . = ALIGN(4);
+    _eshared_ram = .;
+  } >RAM_D3
 
   /* Remove information from the standard libraries */
   /DISCARD/ :

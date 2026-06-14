@@ -76,104 +76,106 @@ void HAL_MspInit(void)
 }
 
 /**
-  * @brief TIM_IC MSP Initialization
+  * @brief SD MSP Initialization
   * This function configures the hardware resources used in this example
-  * @param htim_ic: TIM_IC handle pointer
+  * @param hsd: SD handle pointer
   * @retval None
   */
-void HAL_TIM_IC_MspInit(TIM_HandleTypeDef* htim_ic)
+void HAL_SD_MspInit(SD_HandleTypeDef* hsd)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-  if(htim_ic->Instance==TIM2)
+  RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
+  if(hsd->Instance==SDMMC2)
   {
-    /* USER CODE BEGIN TIM2_MspInit 0 */
+    /* USER CODE BEGIN SDMMC2_MspInit 0 */
 
-    /* USER CODE END TIM2_MspInit 0 */
+    /* USER CODE END SDMMC2_MspInit 0 */
+
+  /** Initializes the peripherals clock
+  */
+    PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_SDMMC;
+    PeriphClkInitStruct.SdmmcClockSelection = RCC_SDMMCCLKSOURCE_PLL;
+    if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
     /* Peripheral clock enable */
-    __HAL_RCC_TIM2_CLK_ENABLE();
+    __HAL_RCC_SDMMC2_CLK_ENABLE();
 
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-    /**TIM2 GPIO Configuration
-    PA5     ------> TIM2_CH1
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    __HAL_RCC_GPIOD_CLK_ENABLE();
+    __HAL_RCC_GPIOG_CLK_ENABLE();
+    /**SDMMC2 GPIO Configuration
+    PB14     ------> SDMMC2_D0
+    PB15     ------> SDMMC2_D1
+    PD6     ------> SDMMC2_CK
+    PD7     ------> SDMMC2_CMD
+    PG11     ------> SDMMC2_D2
+    PB4 (NJTRST)     ------> SDMMC2_D3
     */
-    GPIO_InitStruct.Pin = WS_BL_Pin;
+    GPIO_InitStruct.Pin = GPIO_PIN_14|GPIO_PIN_15|GPIO_PIN_4;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
-    HAL_GPIO_Init(WS_BL_GPIO_Port, &GPIO_InitStruct);
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF9_SDIO2;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-    /* USER CODE BEGIN TIM2_MspInit 1 */
-
-    /* USER CODE END TIM2_MspInit 1 */
-  }
-  else if(htim_ic->Instance==TIM5)
-  {
-    /* USER CODE BEGIN TIM5_MspInit 0 */
-
-    /* USER CODE END TIM5_MspInit 0 */
-    /* Peripheral clock enable */
-    __HAL_RCC_TIM5_CLK_ENABLE();
-
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-    /**TIM5 GPIO Configuration
-    PA0     ------> TIM5_CH1
-    */
-    GPIO_InitStruct.Pin = WS_BR_Pin;
+    GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_7;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    GPIO_InitStruct.Alternate = GPIO_AF2_TIM5;
-    HAL_GPIO_Init(WS_BR_GPIO_Port, &GPIO_InitStruct);
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF11_SDIO2;
+    HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
-    /* USER CODE BEGIN TIM5_MspInit 1 */
+    GPIO_InitStruct.Pin = GPIO_PIN_11;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF10_SDIO2;
+    HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
 
-    /* USER CODE END TIM5_MspInit 1 */
+    /* USER CODE BEGIN SDMMC2_MspInit 1 */
+
+    /* USER CODE END SDMMC2_MspInit 1 */
+
   }
 
 }
 
 /**
-  * @brief TIM_IC MSP De-Initialization
+  * @brief SD MSP De-Initialization
   * This function freeze the hardware resources used in this example
-  * @param htim_ic: TIM_IC handle pointer
+  * @param hsd: SD handle pointer
   * @retval None
   */
-void HAL_TIM_IC_MspDeInit(TIM_HandleTypeDef* htim_ic)
+void HAL_SD_MspDeInit(SD_HandleTypeDef* hsd)
 {
-  if(htim_ic->Instance==TIM2)
+  if(hsd->Instance==SDMMC2)
   {
-    /* USER CODE BEGIN TIM2_MspDeInit 0 */
+    /* USER CODE BEGIN SDMMC2_MspDeInit 0 */
 
-    /* USER CODE END TIM2_MspDeInit 0 */
+    /* USER CODE END SDMMC2_MspDeInit 0 */
     /* Peripheral clock disable */
-    __HAL_RCC_TIM2_CLK_DISABLE();
+    __HAL_RCC_SDMMC2_CLK_DISABLE();
 
-    /**TIM2 GPIO Configuration
-    PA5     ------> TIM2_CH1
+    /**SDMMC2 GPIO Configuration
+    PB14     ------> SDMMC2_D0
+    PB15     ------> SDMMC2_D1
+    PD6     ------> SDMMC2_CK
+    PD7     ------> SDMMC2_CMD
+    PG11     ------> SDMMC2_D2
+    PB4 (NJTRST)     ------> SDMMC2_D3
     */
-    HAL_GPIO_DeInit(WS_BL_GPIO_Port, WS_BL_Pin);
+    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_14|GPIO_PIN_15|GPIO_PIN_4);
 
-    /* USER CODE BEGIN TIM2_MspDeInit 1 */
+    HAL_GPIO_DeInit(GPIOD, GPIO_PIN_6|GPIO_PIN_7);
 
-    /* USER CODE END TIM2_MspDeInit 1 */
-  }
-  else if(htim_ic->Instance==TIM5)
-  {
-    /* USER CODE BEGIN TIM5_MspDeInit 0 */
+    HAL_GPIO_DeInit(GPIOG, GPIO_PIN_11);
 
-    /* USER CODE END TIM5_MspDeInit 0 */
-    /* Peripheral clock disable */
-    __HAL_RCC_TIM5_CLK_DISABLE();
+    /* USER CODE BEGIN SDMMC2_MspDeInit 1 */
 
-    /**TIM5 GPIO Configuration
-    PA0     ------> TIM5_CH1
-    */
-    HAL_GPIO_DeInit(WS_BR_GPIO_Port, WS_BR_Pin);
-
-    /* USER CODE BEGIN TIM5_MspDeInit 1 */
-
-    /* USER CODE END TIM5_MspDeInit 1 */
+    /* USER CODE END SDMMC2_MspDeInit 1 */
   }
 
 }

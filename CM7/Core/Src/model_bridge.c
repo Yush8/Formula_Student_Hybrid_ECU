@@ -11,6 +11,8 @@
 #include "main.h"              /* HAL + the User_Button_1_* / User_LED_1_* pin macros */
 #include "params.h"
 #include "can.h"
+#include "scheduler.h"         /* g_sched_ticks - the model tick stamped into each log record */
+#include "logger.h"            /* Log_Write() - drop one record into the CM4 SD-log ring */
 
 /* CAN_FEED: copy one demuxed CAN message into the model inbox in a single line.
  *
@@ -85,4 +87,20 @@ void Model_Step(void)
     HAL_GPIO_WritePin(User_LED_3_GPIO_Port, User_LED_3_Pin, HCU_V2_Simulink_Y.User_LED_3 ? GPIO_PIN_RESET : GPIO_PIN_SET);
 
 //    Can_Send(2, 0x0B0, HCU_V2_Simulink_Y.hcu_status, 8);   /* track the false return if you want drop counts */
+
+    /* ---- 4. log selected signals to the SD card -------------------------
+     * You do NOT edit this block. WHAT gets logged is the single list in
+     * Shared/log_signals.def - this just packs whatever that file names and
+     * drops it in the lock-free ring CM4 drains. RAM-only, never blocks; if CM4
+     * is behind, Log_Write quietly drops the newest record. `tick` is the time
+     * axis; the _Y/_U fields were already populated in the gather phase above.
+     */
+    log_record_t rec = {0};
+    rec.tick = g_sched_ticks;
+#define LOG_Y(ctype, port)  rec.port = (ctype)(HCU_V2_Simulink_Y.port);
+#define LOG_U(ctype, port)  rec.port = (ctype)(HCU_V2_Simulink_U.port);
+#include "../../../Shared/log_signals.def"
+#undef LOG_Y
+#undef LOG_U
+    Log_Write(&rec);
 }
