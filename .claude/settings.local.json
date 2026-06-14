@@ -32,7 +32,27 @@
       "PowerShell(Test-Path .gitignore; \"---\"; Get-ChildItem -Directory CM4,CM7 -Force -ErrorAction SilentlyContinue | Select-Object FullName; \"---size---\"; \"{0:N1} MB\" -f \\(\\(Get-ChildItem -Recurse -File -Force | Measure-Object Length -Sum\\).Sum/1MB\\))",
       "Bash(cp .project.known-good .project)",
       "Bash(rm -rf Debug)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(git --no-pager diff --stat)",
+      "Bash(git --no-pager grep -nE \"TODO|FIXME|XXX|HACK\" -- CM4/Core/Src/sd_logger.c CM4/Core/Inc/sd_logger.h CM4/Core/Src/main.c CM4/FATFS/Target/sd_diskio.c)",
+      "Bash(git --no-pager diff -- CM4/Core/Src/sd_logger.c CM4/Core/Src/main.c CM4/FATFS/Target/sd_diskio.c CM4/Core/Inc/sd_logger.h)",
+      "Bash(git check-ignore *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(python -m py_compile ConfigGUI.py)",
+      "PowerShell($p = Get-ChildItem -Path \"C:\\\\ST\",\"C:\\\\Program Files\\\\STMicroelectronics\",\"$env:LOCALAPPDATA\\\\Programs\" -Recurse -Filter \"arm-none-eabi-gcc.exe\" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName; if \\($p\\) { $p } else { \"arm-none-eabi-gcc not found\" })",
+      "PowerShell($gcc = \"C:\\\\ST\\\\STM32CubeIDE_2.1.1\\\\STM32CubeIDE\\\\plugins\\\\com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.14.3.rel1.win32_1.0.100.202602081740\\\\tools\\\\bin\\\\arm-none-eabi-gcc.exe\"; Set-Location \"C:\\\\Users\\\\Yusha\\\\Documents\\\\Formula Student\\\\Hybrid Code\\\\HCU_V2\"; Write-Host \"--- PREPROCESSED EXPANSION ---\"; & $gcc -E -P _defcheck.c; Write-Host \"--- COMPILE \\(syntax\\) ---\"; & $gcc -c -std=gnu11 -Wall -Wextra _defcheck.c -o _defcheck.o; if \\($?\\) { \"COMPILE OK\" })",
+      "Bash(git checkout *)",
+      "Bash(gh pr *)",
+      "Bash(rm -f _pr_body.md)",
+      "PowerShell($gh = Get-Command gh -ErrorAction SilentlyContinue; if \\($gh\\) { \"gh at: $\\($gh.Source\\)\"; & gh auth status 2>&1 | Select-Object -First 3 } else { \"gh not found on PATH\" })",
+      "Bash(git merge *)",
+      "Bash(git branch *)",
+      "Bash(arm-none-eabi-gcc --version)",
+      "PowerShell($roots = @\\(\"C:\\\\ST\",\"C:\\\\Program Files\\\\STMicroelectronics\",\"C:\\\\Program Files \\(x86\\)\\\\STMicroelectronics\",\"$env:LOCALAPPDATA\\\\Programs\"\\); foreach \\($r in $roots\\) { if \\(Test-Path $r\\) { Get-ChildItem -Path $r -Recurse -Filter \"arm-none-eabi-gcc.exe\" -ErrorAction SilentlyContinue | Select-Object -First 3 -ExpandProperty FullName } })",
+      "PowerShell($gcc = \"C:\\\\ST\\\\STM32CubeIDE_2.1.1\\\\STM32CubeIDE\\\\plugins\\\\com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.14.3.rel1.win32_1.0.100.202602081740\\\\tools\\\\bin\"; $mk = \"C:\\\\ST\\\\STM32CubeIDE_2.1.1\\\\STM32CubeIDE\\\\plugins\\\\com.st.stm32cube.ide.mcu.externaltools.make.win32_2.2.100.202601091506\\\\tools\\\\bin\"; $env:PATH = \"$gcc;$mk;$env:PATH\"; make -C \"CM7\\\\Debug\" -j8 all)",
+      "PowerShell(python -c \"import py_compile,sys; py_compile.compile\\('ConfigGUI.py', doraise=True\\); print\\('ConfigGUI.py: OK'\\)\")"
     ]
   }
 }

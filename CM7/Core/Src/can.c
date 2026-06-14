@@ -264,6 +264,28 @@ void Can_Service(void)
     service_bus(&hfdcan2, &s_rec2, &g_can_stats.bus2_recoveries);
 }
 
+void Can_Health(uint8_t bus, can_health_t *out)
+{
+    if (bus == 1u) {
+        out->bus_off          = bus_off(&hfdcan1);
+        out->recovery_gave_up = s_rec1.given_up;
+    } else if (bus == 2u) {
+        out->bus_off          = bus_off(&hfdcan2);
+        out->recovery_gave_up = s_rec2.given_up;
+    } else {
+        out->bus_off          = true;   /* unknown bus: report not usable */
+        out->recovery_gave_up = false;
+    }
+}
+
+void Can_ClearStats(void)
+{
+    g_can_stats.bus1_rx_lost    = 0u;
+    g_can_stats.bus2_rx_lost    = 0u;
+    g_can_stats.bus1_recoveries = 0u;
+    g_can_stats.bus2_recoveries = 0u;
+}
+
 /* ---- Tx ------------------------------------------------------------------ */
 
 bool Can_Send(uint8_t bus, uint32_t id, const uint8_t *data, uint8_t len)

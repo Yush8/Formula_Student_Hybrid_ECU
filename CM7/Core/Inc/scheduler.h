@@ -66,4 +66,10 @@ bool Sched_StepDue(void);
 extern uint32_t          g_sched_overruns;   /* missed model-step deadlines since boot */
 extern volatile uint32_t g_sched_ticks;      /* total ticks generated since boot       */
 
+/* Zero the overrun counter (for the `stats clear` console command). Deliberately
+ * leaves g_sched_ticks and the internal serviced count alone: those two track
+ * the live time base, and zeroing only one of them would desync the pair and
+ * fabricate a huge overrun on the next step. */
+void Sched_ClearStats(void);
+
 #endif /* SCHEDULER_H */

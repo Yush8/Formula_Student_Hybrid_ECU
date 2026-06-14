@@ -38,4 +38,30 @@
 void Log_Init(void);
 void Log_Write(const log_record_t *rec);
 
+/* ---- Producer-side diagnostics (CM7 view; for the `stats` console command) --
+ * All CM7-local: reading them never touches the card or CM4. The one trackside
+ * question is "is the ring backing up?" - the card is the only slow link, so if
+ * CM4 can't keep up (card stalled / full / absent, or CM4 down) the ring fills
+ * and Log_Write starts dropping the newest records. Same read-only, NOT-fed-to-
+ * the-model policy as g_can_stats / g_sched_overruns.
+ *   drops == 0  => every record offered since boot made it into the ring.
+ *   occ_max     => worst ring backlog seen (HCU_LOG_RING_RECORDS = completely
+ *                  full at least once, i.e. right at the edge of dropping). */
+typedef struct {
+    uint32_t writes;   /* records offered to the ring (Log_Write calls)         */
+    uint32_t drops;    /* records dropped because the ring was full             */
+    uint16_t occ_max;  /* high-water occupancy seen (0..HCU_LOG_RING_RECORDS)   */
+} log_stats_t;
+extern log_stats_t g_log_stats;
+
+/* Current ring occupancy = records waiting for CM4 (0..HCU_LOG_RING_RECORDS).
+ * head/tail are each single-writer 32-bit, so this read is atomic; a value one
+ * tick stale is fine for a status readout. */
+uint32_t Log_Occupancy(void);
+
+/* Zero the producer-side diagnostic counters in g_log_stats (for `stats clear`).
+ * Touches ONLY the counters - never head/tail/the ring, which are the live
+ * inter-core state. */
+void Log_ClearStats(void);
+
 #endif /* LOGGER_H */

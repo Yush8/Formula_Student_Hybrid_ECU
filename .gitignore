@@ -1,8 +1,6 @@
-# STM32CubeIDE build output
+# STM32CubeIDE build output (a bare name matches at any depth, e.g. CM4/Debug/)
 Debug/
 Release/
-**/Debug/
-**/Release/
 
 # Build artifacts
 *.o
@@ -15,7 +13,7 @@ Release/
 *.su
 *.cyclo
 
-# IDE / OS
+# IDE / OS junk
 .DS_Store
 Thumbs.db
 *.bak

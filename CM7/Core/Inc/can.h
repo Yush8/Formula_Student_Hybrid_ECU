@@ -96,6 +96,28 @@ typedef struct {
 
 extern can_stats_t g_can_stats;
 
+/* ---- Live per-bus health (for the `stats` console command) ----------------
+ * A point-in-time read of whether a bus is usable RIGHT NOW, to complement the
+ * free-running event counters above:
+ *   bus_off          true  => off the bus this instant (no comms getting through)
+ *   recovery_gave_up true  => bus-off auto-restart exhausted its attempts and
+ *                             left the bus down (hard wiring/transceiver fault;
+ *                             the model is failing safe). Self-clears once the
+ *                             bus comes back healthy (see Can_Service).
+ * bus = 1 or 2; any other value reports the bus as unusable. */
+typedef struct {
+    bool bus_off;
+    bool recovery_gave_up;
+} can_health_t;
+
+void Can_Health(uint8_t bus, can_health_t *out);
+
+/* Zero the diagnostic counters in g_can_stats (for the `stats clear` console
+ * command). rx_lost is ISR-written, so a clear can race a single increment - of
+ * no consequence for a manual "reset before a run". Live bus-off/recovery STATE
+ * is untouched (it reflects the wiring, not a counter). */
+void Can_ClearStats(void);
+
 /* ---- API ---------------------------------------------------------------- */
 
 /* Configure global filters (accept-all standard into FIFO0), start both

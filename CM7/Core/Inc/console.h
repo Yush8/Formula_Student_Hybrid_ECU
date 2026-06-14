@@ -24,6 +24,8 @@
  *   defaults                       reset to built-in defaults (RAM only)
  *   time                           show RTC wall-clock
  *   time set YYYY-MM-DD HH:MM:SS    set the wall-clock
+ *   stats                          trackside system health (loop / CAN / logging)
+ *   stats clear                    zero the stats counters (e.g. before a run)
  *   ping                           link check -> "pong"
  *
  * The parameter list is GENERATED from params.def, so `list`/`get`/`set` pick

@@ -13,6 +13,8 @@ already use in PuTTY, so the firmware needs no changes:
     defaults                      -> reset to built-in defaults (RAM only)
     time                          -> show the board's wall-clock
     time set YYYY-MM-DD HH:MM:SS  -> set the wall-clock
+    stats                         -> trackside health (loop / CAN / logging)
+    stats clear                   -> zero the stats counters
     ping                          -> pong
 
 Run it:
@@ -146,6 +148,14 @@ class ConsoleApp:
         self.refresh_all_btn.pack(side="left")
         self.ping_btn = ttk.Button(bar, text="Ping", command=self.cmd_ping)
         self.ping_btn.pack(side="left", padx=6)
+
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
+
+        # Health readout. Output lands in the Console box below (multi-line).
+        self.stats_btn = ttk.Button(bar, text="Stats", command=self.cmd_stats)
+        self.stats_btn.pack(side="left")
+        self.clearstats_btn = ttk.Button(bar, text="Clear stats", command=self.cmd_stats_clear)
+        self.clearstats_btn.pack(side="left", padx=6)
 
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
 
@@ -381,6 +391,13 @@ class ConsoleApp:
     def cmd_ping(self):
         self._send("ping")
 
+    def cmd_stats(self):
+        self._send("stats")
+
+    def cmd_stats_clear(self):
+        self._send("stats clear")
+        self.root.after(200, self.cmd_stats)   # show the freshly-zeroed counters
+
     def cmd_get(self, name):
         self._send(f"get {name}")
 
@@ -505,8 +522,9 @@ class ConsoleApp:
             text="● connected" if on else "● disconnected",
             foreground="#27ae60" if on else "#c0392b")
         state = "normal" if on else "disabled"
-        for b in (self.refresh_all_btn, self.ping_btn, self.save_btn,
-                  self.defaults_btn, self.settime_btn, self.gettime_btn):
+        for b in (self.refresh_all_btn, self.ping_btn, self.stats_btn,
+                  self.clearstats_btn, self.save_btn, self.defaults_btn,
+                  self.settime_btn, self.gettime_btn):
             b.config(state=state)
         for b in self._param_buttons:
             b.config(state=state)
