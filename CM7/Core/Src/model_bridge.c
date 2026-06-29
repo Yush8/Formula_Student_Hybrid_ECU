@@ -49,6 +49,30 @@
  */
 #define MODEL_PARAM(name)  (HCU_V2_Simulink_U.name = g_params.name)
 
+/* CAN_TX_GATED: transmit a model-built frame ONLY on the ticks the model asks.
+ *
+ *     CAN_TX_GATED( 2 , 0x007 , Set_Axis_State_0 );
+ *
+ * sends HCU_V2_Simulink_Y.Set_Axis_State_0[0..7] on bus 2 with id 0x007, but
+ * ONLY while HCU_V2_Simulink_Y.Set_Axis_State_0_req is true. The model raises
+ * that flag, holds it until it's satisfied (e.g. the ODrive heartbeat reports
+ * the requested state) then drops it - so a one-shot command goes out a few
+ * times and stops, instead of being blasted every tick. A frozen model that
+ * stops raising the flag goes silent rather than spamming a stale frame.
+ *
+ * A gated command therefore needs TWO Simulink Outports:
+ *     <port>        uint8, width 8     (the 8 data bytes to send)
+ *     <port>_req    boolean            (1 = transmit this tick, 0 = stay silent)
+ *
+ * Use a plain Can_Send (see dispatch) for CONTINUOUS setpoints (torque / vel)
+ * instead - ODrive's rx watchdog actually wants those repeated every tick.
+ */
+#define CAN_TX_GATED(bus, id, port)                                           \
+    do {                                                                      \
+        if (HCU_V2_Simulink_Y.port##_req)                                     \
+            Can_Send((bus), (id), HCU_V2_Simulink_Y.port, 8);                 \
+    } while (0)
+
 void Model_Init(void)
 {
     /* one-time model setup: clears states, loads parameter defaults */
@@ -70,7 +94,13 @@ void Model_Step(void)
 	 * To add a message: add it to canN_messages.def, then add a CAN_FEED line
 	 * here, then add the two inports in Simulink. Nothing else to touch.
 	 */
-	CAN_FEED(bus1, CAN1_TEST, test);
+//	CAN_FEED(bus1, CAN1_TEST, test);
+	CAN_FEED(bus1, CAN1_ECU_APPS, APPS);
+	CAN_FEED(bus2, CAN2_BMS_Limits, BMS_Limits);
+	CAN_FEED(bus2, CAN2_ODrive_0_VI, ODrive_0_VI);
+	CAN_FEED(bus2, CAN2_ODrive_1_VI, ODrive_1_VI);
+	CAN_FEED(bus2, CAN2_ODrive_0_Heartbeat, ODrive_0_Heartbeat);
+	CAN_FEED(bus2, CAN2_ODrive_1_Heartbeat, ODrive_1_Heartbeat);
 
 	/* Examples (add the matching .def line + Simulink inports, then uncomment):
 	 * CAN_FEED(bus1, CAN1_DASH_STATUS,  dash_status);
@@ -79,6 +109,9 @@ void Model_Step(void)
 
 	HCU_V2_Simulink_U.bus1_ok = can.bus1_ok;   /* whole-network health */
 	HCU_V2_Simulink_U.bus2_ok = can.bus2_ok;
+
+	HCU_V2_Simulink_U.SDC_Monitor = (HAL_GPIO_ReadPin(SDC_Monitor_GPIO_Port, SDC_Monitor_Pin) == GPIO_PIN_SET);
+	HCU_V2_Simulink_U.Start_Button = (HAL_GPIO_ReadPin(User_Button_1_GPIO_Port, User_Button_1_Pin) == GPIO_PIN_SET);
 
 
 //    HCU_V2_Simulink_U.User_Button_1 = (HAL_GPIO_ReadPin(User_Button_1_GPIO_Port, User_Button_1_Pin) == GPIO_PIN_SET);
@@ -107,9 +140,27 @@ void Model_Step(void)
 
     HAL_GPIO_WritePin(User_LED_2_GPIO_Port, User_LED_2_Pin, HCU_V2_Simulink_Y.User_LED_2 ? GPIO_PIN_RESET : GPIO_PIN_SET);
 
-    HAL_GPIO_WritePin(User_LED_3_GPIO_Port, User_LED_3_Pin, HCU_V2_Simulink_Y.User_LED_3 ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(AIR_Sink_GPIO_Port, AIR_Sink_Pin, HCU_V2_Simulink_Y.AIR_Enable ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
-//    Can_Send(2, 0x0B0, HCU_V2_Simulink_Y.hcu_status, 8);   /* track the false return if you want drop counts */
+    HAL_GPIO_WritePin(Precharge_Sink_GPIO_Port, Precharge_Sink_Pin, HCU_V2_Simulink_Y.Pre_Charge_Enable ? GPIO_PIN_SET : GPIO_PIN_RESET);
+
+    /* ---- 3a. continuous setpoints: transmit EVERY tick ------------------
+     * ODrive Set_Input_Torque (cmd 0x0E): node 0 = 0x00E, node 1 = 0x02E.
+     * These MUST repeat every 10 ms - ODrive's rx watchdog disarms the axis if
+     * the stream stops, so spamming is correct here. The model is responsible
+     * for commanding safe (zero) torque under any fault.
+     */
+    Can_Send(2, 0x00E, HCU_V2_Simulink_Y.Torque_Left, 8);
+    Can_Send(2, 0x02E, HCU_V2_Simulink_Y.Torque_Right, 8);
+
+    /* ---- 3b. one-shot / confirmed commands: transmit only when asked -----
+     * ODrive Set_Axis_State (cmd 0x07): node 0 = 0x007, node 1 = 0x027.
+     * Payload = requested axis state as uint32 LE in bytes 0..3 (8 =
+     * CLOSED_LOOP_CONTROL to arm, 1 = IDLE to disarm, 3 = calibration).
+     * Gated: the model resends until the heartbeat confirms, then drops _req.
+     */
+    CAN_TX_GATED(2, 0x007, Set_Axis_State_0);
+    CAN_TX_GATED(2, 0x027, Set_Axis_State_1);
 
     /* ---- 4. log selected signals to the SD card -------------------------
      * You do NOT edit this block. WHAT gets logged is the single list in

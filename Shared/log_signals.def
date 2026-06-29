@@ -50,6 +50,5 @@
 /*       type        Simulink port name   */
 LOG_Y(  uint8_t,   User_LED_1 )
 LOG_Y(  uint8_t,   User_LED_2 )
-LOG_Y(  uint8_t,   User_LED_3 )
 LOG_U(  uint8_t,   bus1_ok    )
 LOG_U(  uint8_t,   bus2_ok    )

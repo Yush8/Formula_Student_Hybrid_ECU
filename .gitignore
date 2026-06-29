@@ -19,6 +19,13 @@ Thumbs.db
 *.bak
 *.tmp
 
+# Simulink / Embedded Coder build cache (generated, machine-local).
+# NOTE: the generated *_ert_rtw source folder IS tracked on purpose - it is what
+# the STM32 firmware compiles. Only the throwaway cache is ignored here.
+slprj/
+*.slxc
+*.autosave
+
 # Captured SD-card data logs
 LOG*.csv
 

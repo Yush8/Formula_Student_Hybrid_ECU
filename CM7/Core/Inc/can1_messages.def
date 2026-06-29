@@ -16,6 +16,7 @@
  * ===================================================================== */
 
 CAN_MSG(CAN1_TEST, 0x200)
+CAN_MSG(CAN1_ECU_APPS, 0x604)
 
 /* --- Examples: copy a line out of this comment, rename it, set the id ---
 CAN_MSG(CAN1_DASH_STATUS, 0x100)
