@@ -18,6 +18,16 @@
 CAN_MSG(CAN1_TEST, 0x200)
 CAN_MSG(CAN1_ECU_APPS, 0x604)
 
+/* ECU "Hybrid" status frame - one 8-byte frame carrying three signals the HCU
+ * needs (Sync State, Steering Angle, Brake Pressure). As with every other frame
+ * the C side just forwards the raw 8 bytes; the split + scaling is done in
+ * Simulink. Brake pressure now arrives here, so this replaces the old 0x605
+ * placeholder (that id is not in the CAN matrix). Leave the matching CAN_FEED
+ * in model_bridge.c commented until the model has a `Hybrid` inport that USES
+ * the bytes - an unconnected root inport is pruned by Embedded Coder and the
+ * CM7 build fails to link (same reason the old Brake feed was left off). */
+CAN_MSG(CAN1_ECU_Hybrid, 0x627)
+
 /* --- Examples: copy a line out of this comment, rename it, set the id ---
 CAN_MSG(CAN1_DASH_STATUS, 0x100)
 CAN_MSG(CAN1_ECU_RPM,     0x101)

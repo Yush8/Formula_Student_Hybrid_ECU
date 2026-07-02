@@ -37,3 +37,6 @@ venv/
 
 # ConfigGUI remembered port / baud (per-machine, not source)
 ConfigGUI.settings.json
+
+# Claude Code per-machine local settings (permission grants, plugin paths)
+.claude/settings.local.json

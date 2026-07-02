@@ -53,9 +53,11 @@ def find_def(explicit=None):
 
 
 def parse_def(path):
-    """Return (record_fmt, field_names) from log_signals.def. tick is implicit."""
-    fmt = "<I"                    # leading uint32 tick (always first)
-    names = ["tick"]
+    """Return (record_fmt, field_names) from log_signals.def. tick and overruns
+    are implicit leading fields (both auto-added by the firmware; see the
+    log_record_t layout in Shared/hcu_ipc.h)."""
+    fmt = "<II"                   # leading uint32 tick, then uint32 overruns
+    names = ["tick", "overruns"]
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
             m = _SIG_RE.match(line)

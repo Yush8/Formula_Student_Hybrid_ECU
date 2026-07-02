@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-HCU V2 Config Console
-=====================
+HCU V2 Console
+==============
 A friendly GUI front-end for the USB-CDC command console on the Formula
 Student hybrid controller. It speaks the *exact* same text protocol you
 already use in PuTTY, so the firmware needs no changes:
@@ -15,6 +15,9 @@ already use in PuTTY, so the firmware needs no changes:
     time set YYYY-MM-DD HH:MM:SS  -> set the wall-clock
     stats                         -> trackside health (loop / CAN / logging)
     stats clear                   -> zero the stats counters
+    telem on|off                  -> start/stop the live model-signal stream
+    telem rate <hz>               -> set the stream rate (1..100 Hz)
+    telem list                    -> schema of the streamed signals
     ping                          -> pong
 
 Run it:
@@ -26,15 +29,19 @@ Run it:
 NOTE: only one program can own a COM port at a time -- close PuTTY before
 connecting here, and vice-versa.
 
->>> NOTHING TO MAINTAIN HERE WHEN YOU ADD A PARAMETER. <<<
-The list of tunables is discovered live from the board (it parses the `list`
-output), so any parameter you add in CM7/Core/Inc/params.def shows up here
-automatically -- no edit to this file is ever needed.
+>>> NOTHING TO MAINTAIN HERE WHEN YOU ADD A PARAMETER OR A TELEMETRY SIGNAL. <<<
+  * The tunables are discovered live by parsing `list`, so any parameter you add
+    in CM7/Core/Inc/params.def shows up in the Config tab automatically.
+  * The live signals are discovered live by parsing `telem list` (and the stream
+    itself), so any signal you add in CM7/Core/Inc/telem_signals.def shows up in
+    the Live Telemetry tab automatically.
+No edit to this file is ever needed for either.
 """
 
 import os
 import re
 import json
+import time
 import queue
 import threading
 import datetime
@@ -45,6 +52,8 @@ import serial
 import serial.tools.list_ports
 
 BAUDS = ["9600", "19200", "38400", "57600", "115200"]  # cosmetic for a CDC port
+TELEM_RATES = ["1", "2", "5", "10", "20", "50", "100"]  # Hz choices
+DEFAULT_TELEM_RATE = "20"
 
 # Where we remember the last port / baud / auto-reconnect choice between runs.
 SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -69,6 +78,40 @@ _TIME_RE = re.compile(
     r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s*$'
 )
 
+# A telemetry status line, e.g. "telem on  rate 20 Hz  signals 33"
+_TELEM_STATUS_RE = re.compile(
+    r'^telem\s+(on|off)\s+rate\s+(\d+)\s*Hz\s+signals\s+(\d+)', re.IGNORECASE)
+
+# A telemetry schema line, e.g. "Torque_Scale_Factor f32 1" or "APPS u8 8"
+_SCHEMA_RE = re.compile(r'^([A-Za-z_]\w*)\s+([a-z0-9]+)\s+(\d+)\s*$')
+
+# ---- Controller-state banner ------------------------------------------------
+# The Safety_Supervisor state machine streams its current state as a plain number
+# in the "State_Enum" telemetry signal; this table turns that number into a human
+# name + colour for the always-on banner. The NUMBERS here MUST match the value
+# the model writes to State_Enum in each Safety_Supervisor state (see the mapping
+# block in CM7/Core/Inc/telem_signals.def). Add/rename freely - an unlisted
+# number just shows as "STATE <n>" in purple, so nothing breaks.
+STATE_SIGNAL = "State_Enum"
+SUPERVISOR_STATES = {          # code: (display name, background, foreground)
+    0:  ("INIT / UNKNOWN", "#7f8c8d", "#ffffff"),   # grey  - chart not run yet
+    1:  ("HV OFF",         "#7f8c8d", "#ffffff"),   # grey  - shutdown / no HV
+    2:  ("STANDBY",        "#2980b9", "#ffffff"),   # blue  - HV up, idle, ready
+    3:  ("PRE-CHARGE",     "#d68910", "#ffffff"),   # amber - bus charging
+    4:  ("RELAY SWAP",     "#d68910", "#ffffff"),   # amber - AIR closing
+    5:  ("DRIVE",          "#27ae60", "#ffffff"),   # green - armed, motors live
+    6:  ("ERROR / FAULT",  "#c0392b", "#ffffff"),   # red   - latched fault
+}
+
+# HV-actuator enable outputs shown as compact lamps beside the state name
+# (green = energised / closed, grey = open). These are ordinary boolean model
+# Outports already in telem_signals.def. (telemetry signal name, short label)
+HV_ENABLE_LAMPS = [
+    ("AIR_Enable",        "AIR"),
+    ("Pre_Charge_Enable", "PRE-CHG"),
+    ("Inverter_Enable",   "INVERTER"),
+]
+
 
 class ConsoleApp:
     def __init__(self, root):
@@ -84,29 +127,40 @@ class ConsoleApp:
         self._param_order = []
         self._param_buttons = []
 
+        # ---- live telemetry state ----
+        self._telem_order = []        # signal names in discovery order
+        self._telem_last = {}         # name -> last displayed value (skip no-ops)
+        self._telem_streaming = False
+        self._schema_collecting = False
+        self._telem_frames = 0        # frames since the last Hz sample
+        self._telem_hz = 0.0
+        self._telem_filter = ""
+
         self._port_map = {}
         self._target_device = None       # device we (try to) stay connected to
         self._reconnect_after = None     # pending root.after id for reconnect
         self._user_disconnected = False  # True after an explicit Disconnect
 
-        root.title("HCU V2  --  Config Console")
-        root.minsize(720, 640)
+        root.title("HCU V2  --  Console")
+        root.minsize(820, 720)
         try:
             ttk.Style().theme_use("clam")
         except tk.TclError:
             pass
 
         self.auto_reconnect_var = tk.BooleanVar(value=True)
+        self.telem_rate_var = tk.StringVar(value=DEFAULT_TELEM_RATE)
 
         self._build_connection_bar()
         self._build_actions_bar()
-        self._build_var_panel()
-        self._build_console_panel()
+        self._build_state_banner()
+        self._build_notebook()
         self._set_connected(False)
 
         self.refresh_ports()
         self._load_settings()
         self.root.after(50, self._poll_rx)
+        self.root.after(1000, self._telem_tick)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # If we remembered a port and auto-reconnect is on, connect on startup.
@@ -144,14 +198,14 @@ class ConsoleApp:
         bar = ttk.Frame(f)
         bar.pack(fill="x", padx=4, pady=6)
 
-        self.refresh_all_btn = ttk.Button(bar, text="Refresh all (list)", command=self.rescan_params)
+        self.refresh_all_btn = ttk.Button(bar, text="Refresh all (list)", command=self.rescan_all)
         self.refresh_all_btn.pack(side="left")
         self.ping_btn = ttk.Button(bar, text="Ping", command=self.cmd_ping)
         self.ping_btn.pack(side="left", padx=6)
 
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
 
-        # Health readout. Output lands in the Console box below (multi-line).
+        # Health readout. Output lands in the Console tab (multi-line).
         self.stats_btn = ttk.Button(bar, text="Stats", command=self.cmd_stats)
         self.stats_btn.pack(side="left")
         self.clearstats_btn = ttk.Button(bar, text="Clear stats", command=self.cmd_stats_clear)
@@ -175,12 +229,84 @@ class ConsoleApp:
         ttk.Label(bar, textvariable=self.clock_var, foreground="#1f6aa5",
                   font=("Consolas", 10)).pack(side="left")
 
-    def _build_var_panel(self):
-        f = ttk.LabelFrame(self.root, text="Config parameters (auto-discovered from the board)")
-        f.pack(fill="both", expand=True, padx=8, pady=4)
+    # ---- Controller-state banner (always visible, above the tabs) ----
+    def _build_state_banner(self):
+        """A big, always-on readout of the Safety_Supervisor state (State_Enum,
+        decoded to a name) plus compact lamps for the HV-actuator enables
+        (AIR / pre-charge / inverter). Sits above the notebook so it stays visible
+        on every tab, and lights up automatically once the board streams these
+        signals - no data, no problem, it just says 'waiting for stream'."""
+        f = ttk.LabelFrame(self.root, text="Controller state (live)")
+        f.pack(fill="x", padx=8, pady=4)
+
+        inner = ttk.Frame(f)
+        inner.pack(fill="x", padx=6, pady=6)
+
+        self.state_lbl = tk.Label(inner, text="—  waiting for stream",
+                                  anchor="center", font=("Segoe UI", 18, "bold"),
+                                  background="#2c3e50", foreground="#ecf0f1",
+                                  padx=12, pady=10)
+        self.state_lbl.pack(side="left", fill="x", expand=True)
+
+        # One green/grey lamp per HV-actuator enable, right of the state name.
+        self.enable_lamps = {}       # signal name -> (label widget, short text)
+        for sig, label in HV_ENABLE_LAMPS:
+            lamp = tk.Label(inner, text=f"{label} —", width=11, anchor="center",
+                            font=("Segoe UI", 10, "bold"),
+                            background="#7f8c8d", foreground="#ffffff",
+                            padx=6, pady=10)
+            lamp.pack(side="left", padx=(8, 0))
+            self.enable_lamps[sig] = (lamp, label)
+
+    def _update_state_banner(self, raw_value):
+        try:
+            code = int(float(raw_value))
+        except (TypeError, ValueError):
+            return
+        name, bg, fg = SUPERVISOR_STATES.get(
+            code, (f"STATE {code}", "#8e44ad", "#ffffff"))
+        self.state_lbl.config(text=f"SUPERVISOR:  {name}", background=bg, foreground=fg)
+
+    def _update_enable_lamp(self, sig, raw_value):
+        lamp, label = self.enable_lamps[sig]
+        try:
+            on = int(float(raw_value)) != 0
+        except (TypeError, ValueError):
+            return
+        if on:
+            lamp.config(text=f"{label} ON", background="#27ae60")   # green - energised
+        else:
+            lamp.config(text=f"{label} off", background="#7f8c8d")  # grey  - open
+
+    def _reset_state_banner(self):
+        self.state_lbl.config(text="—  waiting for stream",
+                              background="#2c3e50", foreground="#ecf0f1")
+        for lamp, label in self.enable_lamps.values():
+            lamp.config(text=f"{label} —", background="#7f8c8d")
+
+    def _build_notebook(self):
+        nb = ttk.Notebook(self.root)
+        nb.pack(fill="both", expand=True, padx=8, pady=4)
+        self.notebook = nb
+
+        self.tab_config = ttk.Frame(nb)
+        self.tab_telem = ttk.Frame(nb)
+        self.tab_console = ttk.Frame(nb)
+        nb.add(self.tab_telem, text="Live Telemetry")
+        nb.add(self.tab_config, text="Config")
+        nb.add(self.tab_console, text="Console")
+
+        self._build_telem_panel(self.tab_telem)
+        self._build_var_panel(self.tab_config)
+        self._build_console_panel(self.tab_console)
+
+    # ---- Config (parameters) tab ----
+    def _build_var_panel(self, parent):
+        f = ttk.LabelFrame(parent, text="Config parameters (auto-discovered from the board)")
+        f.pack(fill="both", expand=True, padx=8, pady=6)
 
         # Scrollable area so the panel copes with any number of parameters.
-        canvas = tk.Canvas(f, highlightthickness=0, height=150)
+        canvas = tk.Canvas(f, highlightthickness=0)
         vsb = ttk.Scrollbar(f, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=vsb.set)
         vsb.pack(side="right", fill="y")
@@ -195,7 +321,7 @@ class ConsoleApp:
         canvas.bind(
             "<Configure>", lambda e: canvas.itemconfigure(self._grid_window, width=e.width))
         # Mouse wheel while hovering the list.
-        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", self._on_mousewheel))
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", self._on_var_wheel))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
         for c, h in enumerate(["Parameter", "Current", "New value", "", ""]):
@@ -207,14 +333,84 @@ class ConsoleApp:
             text="(connect, then press 'Refresh all (list)' to discover parameters)")
         self.empty_lbl.grid(row=1, column=0, columnspan=5, padx=4, pady=6, sticky="w")
 
-    def _on_mousewheel(self, event):
+    def _on_var_wheel(self, event):
         self._var_canvas.yview_scroll(int(-event.delta / 120), "units")
 
-    def _build_console_panel(self):
-        f = ttk.LabelFrame(self.root, text="Console")
-        f.pack(fill="both", expand=True, padx=8, pady=(4, 8))
+    # ---- Live Telemetry tab ----
+    def _build_telem_panel(self, parent):
+        # Control row.
+        ctl = ttk.Frame(parent)
+        ctl.pack(fill="x", padx=8, pady=(8, 2))
 
-        self.log = scrolledtext.ScrolledText(f, height=10, wrap="word",
+        self.telem_btn = ttk.Button(ctl, text="▶ Start stream", command=self.toggle_telem)
+        self.telem_btn.pack(side="left")
+
+        ttk.Label(ctl, text="Rate:").pack(side="left", padx=(10, 2))
+        self.telem_rate_cb = ttk.Combobox(ctl, width=5, state="readonly",
+                                          values=TELEM_RATES, textvariable=self.telem_rate_var)
+        self.telem_rate_cb.pack(side="left")
+        self.telem_rate_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_rate_change())
+        ttk.Label(ctl, text="Hz").pack(side="left", padx=(2, 8))
+
+        self.telem_refresh_btn = ttk.Button(ctl, text="Refresh signals",
+                                            command=self.fetch_telem_schema)
+        self.telem_refresh_btn.pack(side="left", padx=4)
+
+        ttk.Separator(ctl, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Label(ctl, text="Filter:").pack(side="left", padx=(0, 2))
+        self.filter_var = tk.StringVar()
+        fe = ttk.Entry(ctl, textvariable=self.filter_var, width=18)
+        fe.pack(side="left")
+        self.filter_var.trace_add("write", lambda *_: self._apply_filter())
+        ttk.Button(ctl, text="✕", width=2,
+                   command=lambda: self.filter_var.set("")).pack(side="left", padx=(2, 0))
+
+        self.telem_status = ttk.Label(ctl, text="idle", foreground="#888888",
+                                      font=("Consolas", 9))
+        self.telem_status.pack(side="right")
+
+        # The live grid: every streamed signal, value updating in place.
+        body = ttk.LabelFrame(parent, text="Live values (every signal the board streams)")
+        body.pack(fill="both", expand=True, padx=8, pady=(2, 8))
+
+        cols = ("value", "type")
+        self.tree = ttk.Treeview(body, columns=cols, show="tree headings",
+                                 selectmode="browse")
+        self.tree.heading("#0", text="Signal")
+        self.tree.heading("value", text="Value")
+        self.tree.heading("type", text="Type")
+        self.tree.column("#0", width=260, anchor="w", stretch=False)
+        self.tree.column("value", width=360, anchor="w")
+        self.tree.column("type", width=70, anchor="center", stretch=False)
+        self.tree.tag_configure("changed", foreground="#1f6aa5")
+        self.tree.tag_configure("stale", foreground="#444444")
+
+        tvsb = ttk.Scrollbar(body, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=tvsb.set)
+        tvsb.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="both", expand=True, padx=4, pady=4)
+
+        self.telem_empty = ttk.Label(
+            parent, foreground="#888888",
+            text="(connect; signals auto-discover. Press ▶ Start stream to watch values update.)")
+        # shown/removed dynamically
+        self._telem_empty_shown = False
+        self._show_telem_empty(True)
+
+    def _show_telem_empty(self, show):
+        if show and not self._telem_empty_shown:
+            self.telem_empty.pack(before=self.tree.master, padx=12, pady=2, anchor="w")
+            self._telem_empty_shown = True
+        elif not show and self._telem_empty_shown:
+            self.telem_empty.pack_forget()
+            self._telem_empty_shown = False
+
+    # ---- Console tab ----
+    def _build_console_panel(self, parent):
+        f = ttk.Frame(parent)
+        f.pack(fill="both", expand=True, padx=8, pady=6)
+
+        self.log = scrolledtext.ScrolledText(f, height=12, wrap="word",
                                              font=("Consolas", 10), state="disabled",
                                              background="#1e1e1e", foreground="#d4d4d4",
                                              insertbackground="#d4d4d4")
@@ -243,6 +439,9 @@ class ConsoleApp:
         baud = str(s.get("baud", "115200"))
         if baud in BAUDS:
             self.baud_cb.set(baud)
+        rate = str(s.get("telem_rate", DEFAULT_TELEM_RATE))
+        if rate in TELEM_RATES:
+            self.telem_rate_var.set(rate)
         dev = s.get("last_port")
         if dev:
             self._target_device = dev
@@ -256,6 +455,7 @@ class ConsoleApp:
         data = {
             "auto_reconnect": bool(self.auto_reconnect_var.get()),
             "baud": self.baud_cb.get(),
+            "telem_rate": self.telem_rate_var.get(),
             "last_port": self._target_device,
         }
         try:
@@ -307,6 +507,7 @@ class ConsoleApp:
         self._log(f"connected to {device}\n", "sys")
         self.send_raw_text("")   # blank line -> fresh prompt
         self.rescan_params()     # discover the current parameters
+        self.fetch_telem_schema()  # discover the live signals
         self.cmd_get_time()      # show the board clock
 
     def disconnect(self):
@@ -317,6 +518,9 @@ class ConsoleApp:
             except Exception:
                 pass
         self.ser = None
+        self._telem_streaming = False
+        self._update_telem_button()
+        self._reset_state_banner()
         self._set_connected(False)
         self._log("disconnected\n", "sys")
 
@@ -357,7 +561,7 @@ class ConsoleApp:
     def _read_loop(self, ser):
         while not self.reader_stop.is_set():
             try:
-                data = ser.read(256)
+                data = ser.read(512)
             except Exception:
                 if not self.reader_stop.is_set():
                     self.rx_queue.put(("__error__", None))
@@ -388,10 +592,17 @@ class ConsoleApp:
         self._clear_params()
         self.cmd_list()
 
+    def rescan_all(self):
+        """Re-discover both parameters and telemetry signals."""
+        self.rescan_params()
+        self.fetch_telem_schema()
+
     def cmd_ping(self):
+        self.notebook.select(self.tab_console)
         self._send("ping")
 
     def cmd_stats(self):
+        self.notebook.select(self.tab_console)
         self._send("stats")
 
     def cmd_stats_clear(self):
@@ -427,6 +638,27 @@ class ConsoleApp:
         now = datetime.datetime.now()
         self._send(now.strftime("time set %Y-%m-%d %H:%M:%S"))
 
+    # ---- telemetry commands ----
+    def fetch_telem_schema(self):
+        """Ask the board for its signal schema so the live grid shows every
+        signal (even ones that rarely change) before/without streaming."""
+        if not (self.ser and self.ser.is_open):
+            return
+        self._send("telem list")
+
+    def toggle_telem(self):
+        if self._telem_streaming:
+            self._send("telem off")
+        else:
+            self._send(f"telem rate {self.telem_rate_var.get()}")
+            self._send("telem on")
+            self.notebook.select(self.tab_telem)
+
+    def _on_rate_change(self):
+        self._save_settings()
+        if self._telem_streaming:
+            self._send(f"telem rate {self.telem_rate_var.get()}")
+
     def send_raw(self):
         text = self.raw_var.get().strip()
         self.raw_var.set("")
@@ -456,10 +688,39 @@ class ConsoleApp:
             ln = ln.strip()
             if ln in ("", ">"):
                 continue
+
+            # 1) Live telemetry frame -> update the grid, don't flood the console.
+            if ln.startswith("#T"):
+                self._handle_telem_frame(ln)
+                continue
+
+            # 2) Telemetry schema block ("telem signals:" ... "end").
+            if ln == "telem signals:":
+                self._schema_collecting = True
+                self._begin_schema()
+                continue
+            if self._schema_collecting:
+                if ln == "end":
+                    self._schema_collecting = False
+                    self._finish_schema()
+                    continue
+                if self._parse_schema_line(ln):
+                    continue
+                # not a schema line: fall through to normal handling
+
+            # 3) Everything else: log it and try to interpret it.
             self._log(ln + "\n", "rx")
             self._maybe_update(ln)
 
     def _maybe_update(self, line):
+        m = _TELEM_STATUS_RE.match(line)
+        if m:
+            self._telem_streaming = (m.group(1).lower() == "on")
+            rate = m.group(2)
+            if rate in TELEM_RATES:
+                self.telem_rate_var.set(rate)
+            self._update_telem_button()
+            return
         m = _VALUE_RE.match(line)
         if m:
             self._update_param(m.group(1), m.group(2))
@@ -467,6 +728,110 @@ class ConsoleApp:
         m = _TIME_RE.match(line)
         if m:
             self.clock_var.set(m.group(1))
+
+    # ---------------- telemetry: schema + live frames ----------------
+    def _begin_schema(self):
+        self._schema_seen = set()
+
+    def _parse_schema_line(self, line):
+        m = _SCHEMA_RE.match(line)
+        if not m:
+            return False
+        name, typ, length = m.group(1), m.group(2), int(m.group(3))
+        self._schema_seen.add(name)
+        self._ensure_telem_row(name, typ, length)
+        return True
+
+    def _finish_schema(self):
+        # Drop rows that no longer exist on the board (a signal removed from the
+        # .def). Only prune when we actually received a non-empty schema.
+        if not getattr(self, "_schema_seen", None):
+            return
+        for name in list(self._telem_order):
+            if name not in self._schema_seen:
+                self._remove_telem_row(name)
+        self._apply_filter()
+
+    def _ensure_telem_row(self, name, typ="?", length=1):
+        if name in self._telem_order:
+            if typ != "?":
+                self.tree.set(name, "type", typ if length <= 1 else f"{typ}[{length}]")
+            return
+        self._show_telem_empty(False)
+        disp_type = typ if length <= 1 else f"{typ}[{length}]"
+        self.tree.insert("", "end", iid=name, text=name,
+                         values=("—", disp_type), tags=("stale",))
+        self._telem_order.append(name)
+        self._telem_last[name] = None
+        self._apply_filter_one(name)
+
+    def _remove_telem_row(self, name):
+        try:
+            self.tree.delete(name)
+        except tk.TclError:
+            pass
+        if name in self._telem_order:
+            self._telem_order.remove(name)
+        self._telem_last.pop(name, None)
+
+    def _handle_telem_frame(self, line):
+        # "#T tick=123 User_LED_1=1 APPS=12,0,255,..."
+        self._telem_frames += 1
+        for tok in line.split()[1:]:
+            if "=" not in tok:
+                continue
+            name, _, val = tok.partition("=")
+            if not name:
+                continue
+            if name not in self._telem_order:
+                self._ensure_telem_row(name)     # self-discover if no schema yet
+            if self._telem_last.get(name) != val:
+                self._telem_last[name] = val
+                self.tree.set(name, "value", val)
+                self.tree.item(name, tags=("changed",))
+                # Mirror the supervisor state + HV enables into the banner.
+                # (APPS_Implausibility / BMS_Fault just appear in the grid below.)
+                if name == STATE_SIGNAL:
+                    self._update_state_banner(val)
+                elif name in self.enable_lamps:
+                    self._update_enable_lamp(name, val)
+
+    def _telem_tick(self):
+        # Once a second: refresh the measured stream rate and fade unchanged rows.
+        self._telem_hz = self._telem_frames
+        self._telem_frames = 0
+        if self._telem_streaming:
+            self.telem_status.config(
+                text=f"streaming · {self._telem_hz} fps · {len(self._telem_order)} signals",
+                foreground="#27ae60")
+        elif self._telem_order:
+            self.telem_status.config(
+                text=f"stopped · {len(self._telem_order)} signals", foreground="#888888")
+        else:
+            self.telem_status.config(text="idle", foreground="#888888")
+        # Fade rows back to neutral so only just-changed values stay highlighted.
+        for name in self._telem_order:
+            if self.tree.set(name, "value") != "—":
+                self.tree.item(name, tags=())
+        self.root.after(1000, self._telem_tick)
+
+    def _update_telem_button(self):
+        self.telem_btn.config(text="■ Stop stream" if self._telem_streaming
+                              else "▶ Start stream")
+
+    def _apply_filter(self):
+        flt = self.filter_var.get().strip().lower()
+        self._telem_filter = flt
+        # Rebuild visible order: matching rows attached in discovery order.
+        for name in self._telem_order:
+            self._apply_filter_one(name)
+
+    def _apply_filter_one(self, name):
+        flt = self._telem_filter
+        if not flt or flt in name.lower():
+            self.tree.reattach(name, "", "end")
+        else:
+            self.tree.detach(name)
 
     # ---------------- parameter rows ----------------
     def _clear_params(self):
@@ -524,10 +889,13 @@ class ConsoleApp:
         state = "normal" if on else "disabled"
         for b in (self.refresh_all_btn, self.ping_btn, self.stats_btn,
                   self.clearstats_btn, self.save_btn, self.defaults_btn,
-                  self.settime_btn, self.gettime_btn):
+                  self.settime_btn, self.gettime_btn,
+                  self.telem_btn, self.telem_refresh_btn):
             b.config(state=state)
         for b in self._param_buttons:
             b.config(state=state)
+        if not on:
+            self._update_telem_button()
 
     def _log(self, text, tag="rx"):
         self.log.config(state="normal")
@@ -538,6 +906,12 @@ class ConsoleApp:
     def on_close(self):
         self._user_disconnected = True
         self._cancel_reconnect()
+        # be polite: stop the stream so the board isn't left chattering
+        if self.ser and self.ser.is_open and self._telem_streaming:
+            try:
+                self.ser.write(b"telem off\r\n")
+            except Exception:
+                pass
         self.disconnect()
         self.root.destroy()
 

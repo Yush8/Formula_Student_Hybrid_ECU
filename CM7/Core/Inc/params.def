@@ -59,3 +59,77 @@ PARAM_F32(   kp,             1.500f,   0.0f,     100.0f )
 PARAM_F32(   ki,             0.200f,   0.0f,     100.0f )
 PARAM_I32(   torque_limit,   200,      0,        240    )
 PARAM_I32(   Parameter_1,    0,        0,        1      )
+
+/* --- BMS power-limiter (must match the Simulink Inport names exactly) ------
+ * Drive_Efficiency / BMS_Margin: max is 1.0 ON PURPOSE - >1 would size the
+ *   power budget above the BMS discharge limit and defeat the limiter.
+ * Motor_Torque_Max: per-wheel absolute torque cap [Nm] + stall guard. Set to
+ *   the Neu 2530's real max (4.4 Nm on this LV hybrid). This value also SCALES
+ *   the gearbox-protection torque slew rate (see model_bridge.c): the 0->full
+ *   ramp TIME is fixed, so the Nm/s slew follows this cap automatically.
+ * Left_Direction / Right_Direction: motor spin-direction multipliers, applied
+ *   AFTER the limiter, so they are constrained to {-1,0,1} - magnitude can
+ *   never exceed 1, so a direction value can never amplify torque past DCL.
+ *   Defaults preserve the old behaviour (left negated); confirm your mounting. */
+PARAM_F32(   Drive_Efficiency,  0.850f,  0.0f,   1.0f   )
+PARAM_F32(   BMS_Margin,        0.900f,  0.0f,   1.0f   )
+PARAM_F32(   Motor_Torque_Max,  4.4f,    0.0f,   50.0f  )
+PARAM_I32(   Left_Direction,   -1,      -1,      1      )
+PARAM_I32(   Right_Direction,   1,      -1,      1      )
+
+/* --- Regen / ACL (charge) LIMITER tunables (must match the Simulink Inport
+ *     names). These feed the bms_power_limit block ONLY - the SAFETY limits.
+ *     The brake->regen torque CURVE (deadzone/full-scale) is NOT here: it lives
+ *     in a visible Simulink lookup table in your torque-decision blocks, so the
+ *     team tunes the shape in the model. These three are the safety backstops.
+ * Regen_Efficiency: charge-side efficiency. Used as budget = margin*ACL*V / eff,
+ *   so HIGHER is MORE conservative against ACL (the safe direction is OPPOSITE
+ *   to Drive_Efficiency - do NOT reuse the 0.85). Min kept >=0.5 so a mis-set
+ *   value can't balloon the charge budget. Tune ~0.95.
+ * Motor_Regen_Max: per-wheel MAX regen (braking) torque MAGNITUDE [Nm] - the
+ *   negative cap / backstop (independent of whatever the lookup table outputs).
+ *   Set to the Neu 2530's max (4.4 Nm, same motor as drive). Sets the negative
+ *   end of the drive<->regen span the torque slew ramps across (see model_bridge.c).
+ * Regen_Cutoff_Speed: motor speed [turns/s] below which regen tapers to 0 (per
+ *   wheel) so the motor never reverse-drives a stopped car. Not a rules floor
+ *   (LV hybrid); a driveability/anti-rollback taper - keep it low. Tune on dyno. */
+PARAM_F32(   Regen_Efficiency,   0.950f,  0.5f,   1.0f   )
+PARAM_F32(   Motor_Regen_Max,    4.4f,    0.0f,   50.0f  )
+PARAM_F32(   Regen_Cutoff_Speed, 2.0f,    0.01f,  100.0f )
+
+/* --- Front-axle TORQUE VECTORING (Option A: steering-proportional split) ----
+ *     Must match the Simulink Inport names. Splits the per-wheel base torque
+ *     L/R by steering BEFORE the limiter (which then scales both wheels by one
+ *     factor, so the split ratio survives the power limit). Drive torque only -
+ *     no vectoring under regen braking.
+ * TV_Gain: torque split per unit of steering [Nm per deg]. DEFAULT 0 = TV OFF,
+ *   so the car drives exactly as before until you deliberately tune it up.
+ *   Confirm the sign on a stand first, then raise slowly on a skidpad.
+ * Steering_Centre: straight-ahead offset subtracted from the steering signal
+ *   [steering unit, e.g. deg]. WHILE STEERING IS A CONSTANT-0 PLACEHOLDER LEAVE
+ *   THIS AT 0 - with no real steering signal a non-zero centre acts as a fake
+ *   steering input and would command a constant split. Set it once the steering
+ *   CAN inport is wired.
+ * Steering_Deadzone: no vectoring within +/- this of centre [deg] - rejects
+ *   on-centre noise and small corrections.
+ * Max_Torque_Split: hard cap on |delta T| [Nm] - a steering fault can never
+ *   command a wider split than this. Keep <= Motor_Torque_Max. */
+PARAM_F32(   TV_Gain,            0.000f,  0.0f,    2.0f   )
+PARAM_F32(   Steering_Centre,    0.000f, -30.0f,   30.0f  )
+PARAM_F32(   Steering_Deadzone,  2.000f,  0.0f,    20.0f  )
+PARAM_F32(   Max_Torque_Split,   2.000f,  0.0f,    50.0f  )
+
+/* --- Bench / jack VELOCITY test scaling (wheels-off, no-load spin tests) -----
+ *     Must match the Simulink Inport name. ONLY has any effect when the ODrives
+ *     are switched to VELOCITY_CONTROL over USB (odrivetool) for a wheels-off
+ *     test. The final per-wheel torque request (after torque-vectoring AND all
+ *     power/regen limits) is multiplied by this gain and streamed as a
+ *     Set_Input_Vel (0x00D / 0x02D) frame [motor turns/s per Nm]. The normal
+ *     torque frame keeps streaming; in velocity mode the ODrive just treats it
+ *     as a torque feed-forward, so this is safe to leave wired in the race build.
+ * DEFAULT 0 = velocity request is always 0, so the feature is INERT until you
+ *     deliberately set it for a bench test, and a power-cycle (if unsaved)
+ *     returns it to 0. Because you tap AFTER the limiter, the wheels only spin
+ *     with HV + BMS live (a jacked whole-car test), not a bare ODrive+PSU bench.
+ *     The ODrive's own vel_limit is the real backstop - keep this modest. */
+PARAM_F32(   Vel_Scale,          0.000f,  0.0f,    50.0f  )

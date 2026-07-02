@@ -13,10 +13,13 @@
 #include "scheduler.h"     /* g_sched_overruns / g_sched_ticks for `stats` */
 #include "can.h"           /* g_can_stats / Can_Health() for `stats` */
 #include "logger.h"        /* g_log_stats / Log_Occupancy() for `stats` */
+#include "telem.h"         /* live model-signal stream for the `telem` command */
+#include "air_safety.h"    /* g_air_safety / AirSafety_Reset() for `safety` + the `stats` AIR line */
 #include "main.h"          /* HAL_GetTick() */
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdlib.h>       /* strtoul() for `telem rate` */
 
 /* ------------------------------------------------------------------ */
 /* Line buffer                                                        */
@@ -36,6 +39,12 @@ static void Console_Write(const uint8_t *buf, uint16_t len)
 }
 
 static void Console_Print(const char *s)
+{
+    Console_Write((const uint8_t *)s, (uint16_t)strlen(s));
+}
+
+/* Public so telem.c can stream through the same busy-safe TX path. */
+void Console_Out(const char *s)
 {
     Console_Write((const uint8_t *)s, (uint16_t)strlen(s));
 }
@@ -122,6 +131,23 @@ static void cmd_stats(void)
                    (unsigned long)g_log_stats.drops,
                    (unsigned long)occ, (unsigned)HCU_LOG_RING_RECORDS,
                    (unsigned)g_log_stats.occ_max);
+
+    /* ---- independent controller-freeze fail-safe ----
+     *   FAIL -> AIRs are being forced open: the model step froze (stall latch).
+     *           The model's command is overridden until `safety reset` / power-cycle.
+     *   WARN -> not enforcing now, but a freeze has latched since boot (count>0).
+     *   OK   -> model is alive and has AIR authority. (SDC intent lives in the model
+     *           + the hardware shutdown cutoff - not policed here; see HANDOFF §18.) */
+    const char *astate;
+    if      (g_air_safety.stall_latched)        astate = "FAIL  stall-latched (loop froze) ";
+    else if (!g_air_safety.armed)               astate = "----  not armed (no model step)  ";
+    else if (g_air_safety.stall_trips)          astate = "WARN  recovered                  ";
+    else                                        astate = "OK                               ";
+    Console_Printf(" AIR     %sAIR=%s pre=%s  stall_trips %lu\r\n",
+                   astate,
+                   g_air_safety.air_closed ? "closed" : "open",
+                   g_air_safety.pre_closed ? "closed" : "open",
+                   (unsigned long)g_air_safety.stall_trips);
 }
 
 /* ------------------------------------------------------------------ */
@@ -141,8 +167,14 @@ static void process_line(char *s)
                       "  defaults         reset to built-in defaults (RAM)\r\n"
                       "  time             show RTC wall-clock\r\n"
                       "  time set <d> <t> set clock: YYYY-MM-DD HH:MM:SS\r\n"
-                      "  stats            system health (loop, CAN, logging)\r\n"
+                      "  stats            system health (loop, CAN, logging, AIR)\r\n"
                       "  stats clear      zero the stats counters\r\n"
+                      "  safety           independent AIR fail-safe state\r\n"
+                      "  safety reset     clear a stall latch (stationary; healthy only)\r\n"
+                      "  telem            live-stream status\r\n"
+                      "  telem on|off     start/stop the live model-signal stream\r\n"
+                      "  telem rate <hz>  set stream rate (1-100 Hz)\r\n"
+                      "  telem list       list the streamed signals + types\r\n"
                       "  ping             link check\r\n");
 
     } else if (strcmp(cmd, "stats") == 0) {
@@ -156,6 +188,51 @@ static void process_line(char *s)
             Console_Print("stats cleared\r\n");
         } else {
             Console_Print("usage: stats | stats clear\r\n");
+        }
+
+    } else if (strcmp(cmd, "safety") == 0) {
+        char *sub = strtok(NULL, " ");
+        if (!sub) {                                  /* "safety" -> detail */
+            Console_Printf("controller-freeze fail-safe: %s\r\n",
+                           g_air_safety.stall_latched ? "TRIPPED (stall latched)"
+                         : !g_air_safety.armed        ? "not armed"
+                         :                              "OK (model has authority)");
+            Console_Printf(" AIR sink     %s\r\n", g_air_safety.air_closed ? "CLOSED (energised)" : "open");
+            Console_Printf(" pre-charge   %s\r\n", g_air_safety.pre_closed ? "CLOSED (energised)" : "open");
+            Console_Printf(" model        %s  (age %lu ticks, armed %u)\r\n",
+                           g_air_safety.model_alive ? "alive" : "STALLED",
+                           (unsigned long)g_air_safety.stall_age_ticks,
+                           (unsigned)g_air_safety.armed);
+            Console_Printf(" stall trips  %lu\r\n", (unsigned long)g_air_safety.stall_trips);
+            Console_Print(" (SDC / shutdown intent is handled in the model + hardware - not here)\r\n");
+        } else if (strcmp(sub, "reset") == 0) {
+            if (AirSafety_Reset())
+                Console_Print("stall latch cleared\r\n");
+            else
+                Console_Print("refused: loop must be alive again before reset\r\n");
+        } else {
+            Console_Print("usage: safety | safety reset\r\n");
+        }
+
+    } else if (strcmp(cmd, "telem") == 0) {
+        char *sub = strtok(NULL, " ");
+        if (!sub) {                                  /* "telem" -> status */
+            Telem_PrintStatus();
+        } else if (strcmp(sub, "on") == 0) {
+            Telem_SetStreaming(1);
+            Telem_PrintStatus();
+        } else if (strcmp(sub, "off") == 0) {
+            Telem_SetStreaming(0);
+            Telem_PrintStatus();
+        } else if (strcmp(sub, "list") == 0) {
+            Telem_PrintSchema();
+        } else if (strcmp(sub, "rate") == 0) {
+            char *hz = strtok(NULL, " ");
+            if (!hz) { Console_Print("usage: telem rate <hz>\r\n"); return; }
+            Telem_SetRateHz((uint32_t)strtoul(hz, NULL, 10));
+            Telem_PrintStatus();
+        } else {
+            Console_Print("usage: telem | telem on|off | telem rate <hz> | telem list\r\n");
         }
 
     } else if (strcmp(cmd, "ping") == 0) {

@@ -26,6 +26,7 @@
  *   time set YYYY-MM-DD HH:MM:SS    set the wall-clock
  *   stats                          trackside system health (loop / CAN / logging)
  *   stats clear                    zero the stats counters (e.g. before a run)
+ *   telem [on|off|rate <hz>|list]  live model-signal stream (see telem.h)
  *   ping                           link check -> "pong"
  *
  * The parameter list is GENERATED from params.def, so `list`/`get`/`set` pick
@@ -36,5 +37,9 @@
 
 void Console_Init(void);
 void Console_Poll(void);
+
+/* Busy-safe TX of a NUL-terminated string. Public so other modules (telem.c)
+ * can write to the same USB-CDC console without re-implementing the TX retry. */
+void Console_Out(const char *s);
 
 #endif /* CONSOLE_H */

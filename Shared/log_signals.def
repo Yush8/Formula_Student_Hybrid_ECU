@@ -7,9 +7,11 @@
  *  that fills it on both cores, and the Python decoder) follows automatically,
  *  so they can never drift out of sync.
  *
- *  Every record saved to the card is:   [ tick ]  +  the signals you list below.
- *  `tick` is added for you (the 100 Hz / 10 ms model-step counter = your time
- *  axis). You just list the model signals you care about, one per line.
+ *  Every record saved to the card is:  [ tick ][ overruns ]  +  the signals you
+ *  list below. Both leading columns are added for you: `tick` (the 100 Hz / 10 ms
+ *  model-step counter = your time axis) and `overruns` (missed 10 ms deadlines
+ *  since boot = loop health). You just list the model signals you care about,
+ *  one per line.
  *
  *  ---------------------------------------------------------------------------
  *  TO ADD A SIGNAL  (one line):
@@ -52,3 +54,44 @@ LOG_Y(  uint8_t,   User_LED_1 )
 LOG_Y(  uint8_t,   User_LED_2 )
 LOG_U(  uint8_t,   bus1_ok    )
 LOG_U(  uint8_t,   bus2_ok    )
+
+/* BMS power-limiter diagnostics (model Outports, Simulink 'single' = float) */
+LOG_Y(  float,     Torque_Scale_Factor )
+LOG_Y(  float,     Power_Demand        )
+LOG_Y(  float,     Power_Budget        )
+LOG_Y(  float,     Torque_Request_Left )
+LOG_Y(  float,     Torque_Request_Right )
+LOG_Y(  uint8_t,   Inverter_Enable      )
+
+/* Efficiency / power diagnostics (decoded BMS + per-ODrive DC bus V & I).
+ * Post-process: P_elec = Bus_Voltage_0*Bus_Current_0 + Bus_Voltage_1*Bus_Current_1;
+ *               P_mech = 2*pi*(Torque_Request_Left*Velocity_0 +
+ *                              Torque_Request_Right*Velocity_1);   (Velocity in turns/s)
+ *               drive eff = P_mech / P_elec   (use rows where Torque_Scale_Factor==1). */
+LOG_Y(  float,     DCL )
+LOG_Y(  float,     CCL )
+LOG_Y(  float,     Bus_Voltage_0 )
+LOG_Y(  float,     Bus_Voltage_1 )
+LOG_Y(  float,     Bus_Current_0 )
+LOG_Y(  float,     Bus_Current_1 )
+LOG_Y(  float,     Pack_Voltage )
+LOG_Y(  float,     Velocity_0 )
+LOG_Y(  float,     Velocity_1 )
+LOG_Y(  float,     APPS_Clean )
+
+/* Torque-generation + vectoring (pre-limiter): per-wheel base demand and the
+ * L/R vectoring split. With Torque_Request_Left/Right above, this captures the
+ * whole pedal -> split -> limited-torque chain for TV tuning. */
+LOG_Y(  float,     Base_Torque_Demand )
+LOG_Y(  float,     Delta_Torque )
+
+/* Safety states - cheap and invaluable for post-incident analysis.
+ * (SDC_Monitor is the shutdown-circuit INPUT; AIR/Pre_Charge are the OUTPUTs -
+ * logging the chain together shows cause->effect when something opens.) */
+LOG_U(  uint8_t,   SDC_Monitor )
+LOG_Y(  uint8_t,   AIR_Enable )
+LOG_Y(  uint8_t,   Pre_Charge_Enable )
+/* Engine sync gate (boolean): the extra condition on RELAY_SWAP -> DRIVE.
+ * Logged alongside State_Enum, it shows post-incident whether a failure to
+ * arm was "engine not synced" vs a fault. (stale ECU frame -> false). */
+LOG_Y(  uint8_t,   Engine_Synced )

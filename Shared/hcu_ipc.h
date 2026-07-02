@@ -42,8 +42,9 @@
 
 /* Bump whenever the record/struct layout changes, so an out-of-date consumer or
  * off-target decoder can spot a mismatched layout (the log-file header also
- * carries record_size as a second cross-check). */
-#define HCU_IPC_VERSION       2u
+ * carries record_size as a second cross-check).
+ * v3: added the `overruns` field to log_record_t (loop-health counter). */
+#define HCU_IPC_VERSION       3u
 
 /* Ring capacity in records. MUST be a power of two (single-AND indexing).
  * Stall headroom = HCU_LOG_RING_RECORDS / SCHED_RATE_HZ seconds: at 100 Hz, 256
@@ -58,12 +59,16 @@
  * generated from that one list, so they cannot drift apart (same X-macro trick
  * as the CAN .def lists, s13).
  *
- * `tick` is always first (the 100 Hz model-step counter = the time axis); the
- * signals from log_signals.def follow. Packed, so the on-disk layout is exactly
- * field-after-field with no padding - which keeps the off-target Python decoder
- * trivial and endian-clean. */
+ * `tick` is always first (the 100 Hz model-step counter = the time axis),
+ * followed by `overruns` (missed model-step deadlines since boot = loop health);
+ * the signals from log_signals.def follow those. Both leading fields are auto-
+ * added HERE, not in log_signals.def - they are scheduler diagnostics, not model
+ * signals (same reason `tick` is hardcoded on the telemetry frame). Packed, so
+ * the on-disk layout is exactly field-after-field with no padding - which keeps
+ * the off-target Python decoder trivial and endian-clean. */
 typedef struct __attribute__((packed)) {
-    uint32_t tick;                       /* model tick at capture (10 ms units) */
+    uint32_t tick;                       /* model tick at capture (10 ms units)  */
+    uint32_t overruns;                   /* missed 10 ms deadlines since boot     */
 #define LOG_Y(ctype, port)  ctype port;
 #define LOG_U(ctype, port)  ctype port;
 #include "log_signals.def"               /* resolves next to this header (Shared/) */

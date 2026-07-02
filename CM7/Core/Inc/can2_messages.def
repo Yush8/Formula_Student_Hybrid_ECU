@@ -16,6 +16,8 @@ CAN_MSG(CAN2_ODrive_0_VI, 0x017)
 CAN_MSG(CAN2_ODrive_1_VI, 0x037)
 CAN_MSG(CAN2_ODrive_0_Heartbeat, 0x001)
 CAN_MSG(CAN2_ODrive_1_Heartbeat, 0x021)
+CAN_MSG(CAN2_ODrive_0_Encoder_Estimate, 0x009)
+CAN_MSG(CAN2_ODrive_1_Encoder_Estimate, 0x029)
 
 /* --- Examples: copy a line out of this comment, rename it, set the id ---
 CAN_MSG(CAN2_INV_L_STATUS, 0x0A0)

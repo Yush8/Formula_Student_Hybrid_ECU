@@ -20,7 +20,13 @@ If you can add a CAN ID, you can do all of this.
 | Add a **tunable parameter**          | `CM7/Core/Inc/params.def`                  | rebuild CM7 |
 | Add a **received CAN message**       | `CM7/Core/Inc/can1_messages.def` (or `can2_…`) | + 1 bridge line + Simulink inports |
 | Add a **logged signal** (to SD)      | `Shared/log_signals.def`                   | rebuild **both** cores |
+| **Watch a signal live** on the PC    | `CM7/Core/Inc/telem_signals.def`           | rebuild CM7 |
 | Add an **input/output** (pin/ADC)    | Simulink port + 1 bridge line              | rebuild CM7 |
+
+> **Logging vs. live telemetry are two separate choices.** `log_signals.def` =
+> what gets *written to the SD card*. `telem_signals.def` = what you can *watch
+> live in the GUI*. A signal can be in either, both, or neither — edit them
+> independently.
 
 Each `.def` file starts with a comment block that repeats these exact rules, so
 you can work straight from the file. This guide is the overview.
@@ -111,6 +117,36 @@ shows up in the decoded CSV automatically, labelled with the port name.
 
 ---
 
+## 3b. Watch a signal live on the PC (telemetry)
+
+This is the "see every variable on my laptop, live" feed — for checking that
+data is coming through. It is **separate from logging**: this never touches the
+SD card, it just streams to the GUI's **Live Telemetry** tab.
+
+**Edit `CM7/Core/Inc/telem_signals.def`** — add one line naming a Simulink port.
+Unlike logging, you do **not** state the type (the firmware reads it straight
+from the model, so it can't be wrong):
+
+```c
+TELEM_Y( Torque_Scale_Factor )      /* a model OUTPUT (a root Outport / _Y field) */
+TELEM_U( bus1_ok )                  /* a model INPUT  (a root Inport  / _U field) */
+TELEM_ARRAY_Y( Torque_Left, 8 )     /* an array output (e.g. an 8-byte CAN frame) */
+TELEM_ARRAY_U( APPS, 8 )            /* an array input  (raw CAN payload)          */
+```
+
+The file comes pre-filled with **every** current Outport and Inport, so out of
+the box you see everything. **To stop watching a signal once you don't need it,
+just delete its line** (or wrap it in a C comment) — that is how you "pick".
+
+**Rebuild CM7 only** (telemetry is CM7-only — no CM4 rebuild, unlike logging).
+The signal appears/disappears in the GUI's Live Telemetry grid automatically.
+
+You can also drive it by hand in PuTTY: `telem on` / `telem off`,
+`telem rate 50` (1–100 Hz), `telem list` (the schema). Each live frame is one
+line: `#T tick=1234 User_LED_1=1 Torque_Scale_Factor=0.8571 APPS=12,0,255,...`.
+
+---
+
 ## 4. Add an input or output (a pin or sensor)
 
 1. In Simulink, draw the **Inport** (input) or **Outport** (output), name it, set
@@ -148,8 +184,17 @@ python ConfigGUI.py
   this stationary / in the pit. **Load defaults** resets to the built-in values
   (then Save to keep them) — a factory reset.
 
+The GUI has three tabs:
+- **Live Telemetry** — every signal from `telem_signals.def`, value updating in
+  place. Press **▶ Start stream** to watch them update; pick the **Rate** (1–100
+  Hz); use the **Filter** box to narrow to the signals you care about. The rows
+  auto-discover from the board, so a signal you add to the `.def` just appears.
+- **Config** — the tunable parameters (section 1), auto-discovered.
+- **Console** — the raw text log and a box to type any command by hand.
+
 Everything the GUI does, you can also type in PuTTY (`list`, `get kp`, `set kp 2`,
-`save`, `defaults`, `time`, `time set 2026-06-14 12:00:00`, `ping`).
+`save`, `defaults`, `time`, `time set 2026-06-14 12:00:00`, `stats`,
+`telem on`/`telem off`/`telem rate 50`/`telem list`, `ping`).
 
 ---
 
@@ -171,7 +216,8 @@ old `.def`.
 
 ## After you edit: build & flash
 
-- Changed `params.def`, a `can*.def`, or the bridge → **rebuild CM7**, reflash.
+- Changed `params.def`, `telem_signals.def`, a `can*.def`, or the bridge →
+  **rebuild CM7**, reflash.
 - Changed `log_signals.def` → **rebuild BOTH CM7 and CM4** (the record layout is
   shared), reflash both.
 - After changing any parameter list, press **Save** once on the GUI/console so the

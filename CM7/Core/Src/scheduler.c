@@ -17,6 +17,7 @@
 
 #include "scheduler.h"
 #include "main.h"        /* HAL TIM API + the CubeMX-generated htim6 handle */
+#include "air_safety.h"  /* AirSafety_Supervise() - the independent AIR fail-safe runs in this ISR */
 
 extern TIM_HandleTypeDef htim6;   /* defined by CubeMX in main.c (MX_TIM6_Init) */
 
@@ -65,5 +66,10 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     if (htim->Instance == TIM6)
     {
         g_sched_ticks++;
+        /* Independent AIR fail-safe: enforced HERE, in the ISR, so it keeps working
+         * even if the cooperative superloop (or the model) hangs. Tiny + ISR-safe
+         * (GPIO + integer compares only). It reads the just-incremented tick to age
+         * the model's proof-of-life heartbeat. See air_safety.c. */
+        AirSafety_Supervise();
     }
 }

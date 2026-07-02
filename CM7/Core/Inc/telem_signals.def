@@ -1,0 +1,159 @@
+/*
+ * telem_signals.def  --  WHICH SIGNALS ARE STREAMED LIVE OVER USB
+ *
+ *  >>>>>>  THIS IS THE ONE FILE YOU EDIT TO CHANGE WHAT IS SHOWN LIVE.  <<<<<<
+ *  No C knowledge needed. Same idea as params.def / log_signals.def: add one
+ *  line per signal and EVERYTHING else (the firmware that formats it, the
+ *  `telem list` schema, and the live grid in the GUI) follows automatically,
+ *  so they can never drift out of sync.
+ *
+ *  This is the "watch every variable on my PC" feed. It is SEPARATE from
+ *  logging (Shared/log_signals.def). Logging = what gets written to the SD
+ *  card; telemetry = what you can watch live in the GUI. Edit them
+ *  independently - a signal can be in one, both, or neither.
+ *
+ *  Every live frame the board sends is:  #T  tick=<n>  overruns=<n>  <name>=<value> ...
+ *  `tick` (the 100 Hz / 10 ms model-step counter = your time axis) and `overruns`
+ *  (missed 10 ms deadlines since boot = loop health) are added for you. You just
+ *  list the model signals you want to watch, one per line.
+ *
+ *  ---------------------------------------------------------------------------
+ *  TO ADD A SIGNAL  (one line):
+ *
+ *     A model OUTPUT (a root Outport in Simulink, i.e. a field of _Y):
+ *           scalar:   TELEM_Y( <PortName> )
+ *           array:    TELEM_ARRAY_Y( <PortName>, <length> )
+ *
+ *     A model INPUT  (a root Inport in Simulink, i.e. a field of _U):
+ *           scalar:   TELEM_U( <PortName> )
+ *           array:    TELEM_ARRAY_U( <PortName>, <length> )
+ *
+ *     <PortName>  must be spelled EXACTLY like the Simulink port.
+ *     You do NOT state the type - the firmware reads it straight from the
+ *     model struct, so a wrong type is impossible (this is even safer than
+ *     log_signals.def, which still asks you for the C type).
+ *
+ *  TO STOP WATCHING A SIGNAL: just delete its line (or wrap it in a C
+ *  comment). This is how you "pick" what you want once you don't need it all.
+ *
+ *  After editing: rebuild CM7 and reflash. The signal appears / disappears in
+ *  the GUI live display automatically. (No CM4 rebuild - telemetry is CM7-only,
+ *  unlike logging which is shared across both cores.)
+ *  ---------------------------------------------------------------------------
+ *
+ *  Rules / notes:
+ *   - No semicolon, no comma at the end of the line (just like CAN_MSG).
+ *   - Arrays ARE supported here (handy for watching raw 8-byte CAN payloads).
+ *     They show as a comma-separated list:  APPS=12,0,255,...
+ *   - Each <PortName> must be unique in this list.
+ *   - Bandwidth is not a concern at USB full speed; list as many as you like.
+ *     Lower the stream rate (`telem rate <hz>`) if you ever want it gentler.
+ */
+
+/* ===================== MODEL OUTPUTS (_Y) ============================ *
+ * Everything the model decides. This is the primary "is it all coming
+ * through?" feed.                                                       */
+TELEM_Y(       User_LED_1 )
+TELEM_Y(       User_LED_2 )
+TELEM_Y(       AIR_Enable )
+TELEM_Y(       Pre_Charge_Enable )
+TELEM_Y(       Inverter_Enable )
+TELEM_Y(       Torque_Scale_Factor )
+TELEM_Y(       Power_Demand )
+TELEM_Y(       Power_Budget )
+TELEM_Y(       Torque_Request_Left )
+TELEM_Y(       Torque_Request_Right )
+/* Torque-generation + vectoring internals (pre-limiter): the per-wheel base
+ * demand and the L/R vectoring split - watch the pedal -> split -> ODrive
+ * chain live while tuning TV. */
+TELEM_Y(       Base_Torque_Demand )
+TELEM_Y(       Delta_Torque )
+TELEM_Y(       Set_Axis_State_0_req )
+TELEM_Y(       Set_Axis_State_1_req )
+
+/* ---- Safety / decision diagnostics: the "why", not just the "what" ---------
+ * Three internal decision signals promoted to root Outports so you can watch the
+ * reasoning, not only the result:
+ *
+ *   State_Enum           the HV state machine's current state as a NUMBER. The GUI
+ *                        decodes it to a name in the big "Controller state" banner.
+ *                        Mapping (set by the Safety_Supervisor Stateflow entry
+ *                        actions; mirrored in ConfigGUI's SUPERVISOR_STATES):
+ *                            0 = init / not yet run
+ *                            1 = HV_OFF        4 = RELAY_SWAP
+ *                            2 = STANDBY       5 = DRIVE
+ *                            3 = PRE_CHARGE    6 = ERROR / FAULT
+ *   APPS_Implausibility  the two-channel pedal-disagreement flag (boolean).
+ *   BMS_Fault            BMS reporting zero limits, DCL==0 && CCL==0 (boolean).
+ *
+ * LIVE: confirmed present in ExtY_HCU_V2_Simulink_T (model v1.104). If you ever
+ * rename these Outports in Simulink, keep the names below and the GUI's
+ * STATE_SIGNAL / SUPERVISOR_STATES in step with the model. */
+TELEM_Y(       State_Enum )
+TELEM_Y(       APPS_Implausibility )
+TELEM_Y(       BMS_Fault )
+/* Engine sync gate: true only while the ECU reports synced AND its frame is
+ * fresh (stale ECU_Misc -> false). This is what holds the chain in RELAY_SWAP
+ * (State_Enum 4) instead of arming the inverter (DRIVE / 5) - watch it live to
+ * see why the e-drive is / isn't arming. */
+TELEM_Y(       Engine_Synced )
+
+/* Decoded BMS + ODrive scalars (the efficiency / power-budget diagnostics).
+ * These let you watch DCL/CCL, per-ODrive DC bus V & I live, and - with the
+ * motor speeds + torque requests below - compute drivetrain efficiency.
+ * P_elec = Bus_Voltage_0*Bus_Current_0 + Bus_Voltage_1*Bus_Current_1.        */
+TELEM_Y(       DCL )
+TELEM_Y(       CCL )
+TELEM_Y(       Bus_Voltage_0 )
+TELEM_Y(       Bus_Voltage_1 )
+TELEM_Y(       Bus_Current_0 )
+TELEM_Y(       Bus_Current_1 )
+TELEM_Y(       Pack_Voltage )
+TELEM_Y(       Velocity_0 )
+TELEM_Y(       Velocity_1 )
+TELEM_Y(       APPS_Clean )
+TELEM_ARRAY_Y( Torque_Left,        8 )
+TELEM_ARRAY_Y( Torque_Right,       8 )
+TELEM_ARRAY_Y( Set_Axis_State_0,   8 )
+TELEM_ARRAY_Y( Set_Axis_State_1,   8 )
+
+/* ===================== MODEL INPUTS (_U) ============================= *
+ * What the model is actually being fed - so you can confirm CAN frames,
+ * the pedal, the SDC line and the tunables are reaching the model.      */
+TELEM_U(       bus1_ok )
+TELEM_U(       bus2_ok )
+TELEM_U(       SDC_Monitor )
+TELEM_U(       Start_Button )
+TELEM_U(       Drive_Efficiency )
+TELEM_U(       BMS_Margin )
+TELEM_U(       Motor_Torque_Max )
+TELEM_U(       Left_Direction )
+TELEM_U(       Right_Direction )
+TELEM_U(       Regen_Efficiency )
+TELEM_U(       Motor_Regen_Max )
+TELEM_U(       Regen_Cutoff_Speed )
+
+/* Torque-vectoring tunables (front-axle steering split). */
+TELEM_U(       TV_Gain )
+TELEM_U(       Steering_Centre )
+TELEM_U(       Steering_Deadzone )
+TELEM_U(       Max_Torque_Split )
+
+/* CAN payloads (raw 8-byte frames) + their freshness in ms             *
+ * (_age = UINT32_MAX/4294967295 means "never seen").                   */
+TELEM_ARRAY_U( APPS,                       8 )
+TELEM_U(       APPS_age )
+TELEM_ARRAY_U( BMS_Limits,                 8 )
+TELEM_U(       BMS_Limits_age )
+TELEM_ARRAY_U( ODrive_0_VI,                8 )
+TELEM_U(       ODrive_0_VI_age )
+TELEM_ARRAY_U( ODrive_1_VI,                8 )
+TELEM_U(       ODrive_1_VI_age )
+TELEM_ARRAY_U( ODrive_0_Heartbeat,         8 )
+TELEM_U(       ODrive_0_Heartbeat_age )
+TELEM_ARRAY_U( ODrive_1_Heartbeat,         8 )
+TELEM_U(       ODrive_1_Heartbeat_age )
+TELEM_ARRAY_U( ODrive_0_Encoder_Estimate,  8 )
+TELEM_U(       ODrive_0_Encoder_Estimate_age )
+TELEM_ARRAY_U( ODrive_1_Encoder_Estimate,  8 )
+TELEM_U(       ODrive_1_Encoder_Estimate_age )
