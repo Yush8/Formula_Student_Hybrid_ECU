@@ -133,3 +133,51 @@ PARAM_F32(   Max_Torque_Split,   2.000f,  0.0f,    50.0f  )
  *     with HV + BMS live (a jacked whole-car test), not a bare ODrive+PSU bench.
  *     The ODrive's own vel_limit is the real backstop - keep this modest. */
 PARAM_F32(   Vel_Scale,          0.000f,  0.0f,    50.0f  )
+
+/* --- BENCH engine-off drive-enable BYPASS (engine-off test day) --------------
+ *     Boolean. Must match the Simulink Inport name. The Safety_Supervisor holds
+ *     the chain in RELAY_SWAP (State_Enum 4) until the ECU reports the engine
+ *     synced (Sync State == 3), which never happens with the engine OFF. Set
+ *     this true to OR that ONE gate open so the chain can advance to DRIVE
+ *     (State_Enum 5) on the bench with no running engine. It bypasses ONLY the
+ *     engine-sync gate - HV, precharge, APPS plausibility, the independent AIR
+ *     fail-safe and the stall latch are all still live and unaffected.
+ * DEFAULT 0 = normal race behaviour (real engine sync required). A power-cycle
+ *     (if unsaved) returns it to 0.
+ * WARNING: this is a drive-enable interlock bypass. Do NOT `save` it to flash -
+ *     a saved 1 makes the car boot ready to arm the e-drive with no engine. Flip
+ *     it for the test, then power-cycle (or set 0) before running for real. */
+PARAM_I32(   Bench_Engine_Off,   0,       0,       1      )
+
+/* --- BENCH speed-gate BYPASS (jacked, wheels-off spin test) ------------------
+ *     Boolean. Must match the Simulink Inport name. The Option-1 anti-rollaway
+ *     logic holds DRIVE torque at 0 until the car is actually ROLLING - road
+ *     speed is decoded in Simulink from `vehicleSpeed`, which already rides in
+ *     the APPS frame at APPS[4..5] (no new CAN). With the wheels off the ground
+ *     on a jack the car never rolls, so set this true to OR that speed gate open
+ *     and let the motors spin for a bench test. It bypasses ONLY the speed gate -
+ *     the engine-sync gate (Bench_Engine_Off), HV, precharge, APPS plausibility,
+ *     the brake-plausibility cut, the independent AIR fail-safe and the stall
+ *     latch are ALL still live.
+ * DEFAULT 0 = normal race behaviour (real road speed required). For a full
+ *     engine-off jack test set BOTH Bench_Engine_Off and this to 1. A power-cycle
+ *     (if unsaved) returns it to 0.
+ * WARNING: this is a drive-enable interlock bypass. Do NOT `save` it as 1 - a
+ *     saved 1 boots the car ready to spin the motors with no speed interlock.
+ *     Flip it for the test, then power-cycle (or set 0) before running for real. */
+PARAM_I32(   Bench_Speed_Bypass,  0,       0,       1      )
+
+/* --- GUI / console START button (mirrors the physical PCB start button) ------
+ *     Boolean. Must match the Simulink Inport name. Lets the car be put ready-to-
+ *     drive from the laptop (or a `set Start_Button_GUI 1`) instead of only the
+ *     PCB button. In Simulink it is simply OR'd with the physical Start_Button
+ *     inport, so BOTH sources run the IDENTICAL ready-to-drive sequence and every
+ *     interlock (HV, precharge, APPS plausibility, engine sync, the independent
+ *     AIR fail-safe): it can REQUEST start, it can never bypass a safety gate.
+ *     Fed to a boolean inport via MODEL_PARAM in model_bridge.c (int32 0/1 narrows
+ *     to boolean implicitly, exactly like Bench_Engine_Off).
+ * DEFAULT 0 = released. The GUI START button sends a brief PULSE (1 then back to
+ *     0), so it behaves like a momentary press and can never stick "on".
+ * WARNING: do NOT `save` it as 1 - a saved 1 would boot the car holding the start
+ *     button. At rest it is 0, so a normal save captures 0. */
+PARAM_I32(   Start_Button_GUI,   0,       0,       1      )

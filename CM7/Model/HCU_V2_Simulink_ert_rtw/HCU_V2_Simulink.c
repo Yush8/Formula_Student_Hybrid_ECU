@@ -7,9 +7,9 @@
  *
  * Code generated for Simulink model 'HCU_V2_Simulink'.
  *
- * Model version                  : 1.125
+ * Model version                  : 1.136
  * Simulink Coder version         : 25.2 (R2025b) 28-Jul-2025
- * C/C++ source code generated on : Wed Jul  1 18:46:53 2026
+ * C/C++ source code generated on : Sun Jul  5 10:07:11 2026
  *
  * Target selection: ert.tlc
  * Embedded hardware selection: ARM Compatible->ARM Cortex-M
@@ -57,8 +57,9 @@ RT_MODEL_HCU_V2_Simulink_T *const HCU_V2_Simulink_M = &HCU_V2_Simulink_M_;
 
 /* Forward declaration for local functions */
 static void HCU_V2_Simulink_PRE_CHARGE(void);
-static void HCU_V2_Simulink_RELAY_SWAP(void);
-static void HCU_V2_Simulink_STANDBY(const real32_T *Switch2);
+static void HCU_V2_Simulink_RELAY_SWAP(const boolean_T *OR);
+static void HCU_V2_Simulink_STANDBY(const boolean_T *OR_e, const real32_T
+  *Switch2);
 real32_T look1_iflf_binlcpw(real32_T u0, const real32_T bp0[], const real32_T
   table[], uint32_T maxIndex)
 {
@@ -121,6 +122,7 @@ real32_T look1_iflf_binlcpw(real32_T u0, const real32_T bp0[], const real32_T
  * Output and update for atomic system:
  *    '<S1>/Bit Shift'
  *    '<S1>/Bit Shift1'
+ *    '<S1>/Bit Shift2'
  *    '<S2>/Bit Shift'
  *    '<S2>/Bit Shift1'
  *    '<S2>/Bit Shift2'
@@ -216,7 +218,7 @@ static void HCU_V2_Simulink_PRE_CHARGE(void)
 }
 
 /* Function for Chart: '<S5>/Safety_Supervisor' */
-static void HCU_V2_Simulink_RELAY_SWAP(void)
+static void HCU_V2_Simulink_RELAY_SWAP(const boolean_T *OR)
 {
   /* Outport: '<Root>/Pre_Charge_Enable' */
   HCU_V2_Simulink_Y.Pre_Charge_Enable = true;
@@ -225,48 +227,54 @@ static void HCU_V2_Simulink_RELAY_SWAP(void)
   HCU_V2_Simulink_Y.AIR_Enable = true;
 
   /* Outport: '<Root>/State_Enum' */
-  HCU_V2_Simulink_Y.State_Enum = 4U;
-
-  /* Outport: '<Root>/Engine_Synced' incorporates:
-   *  Inport: '<Root>/SDC_Monitor'
-   *  Outport: '<Root>/AIR_Enable'
+  /* Inport: '<Root>/SDC_Monitor' incorporates:
    *  Outport: '<Root>/BMS_Fault'
-   *  Outport: '<Root>/Inverter_Enable'
-   *  Outport: '<Root>/Pre_Charge_Enable'
-   *  Outport: '<Root>/State_Enum'
    */
-  if ((HCU_V2_Simulink_DW.temporalCounter_i1 >= 10) &&
-      HCU_V2_Simulink_Y.Engine_Synced) {
+  HCU_V2_Simulink_Y.State_Enum = 4U;
+  if ((HCU_V2_Simulink_DW.temporalCounter_i1 >= 10) && (*OR)) {
     HCU_V2_Simulink_DW.is_c3_HCU_V2_Simulink = HCU_V2_Simulink_IN_DRIVE;
+
+    /* Outport: '<Root>/Pre_Charge_Enable' */
     HCU_V2_Simulink_Y.Pre_Charge_Enable = false;
+
+    /* Outport: '<Root>/Inverter_Enable' */
     HCU_V2_Simulink_Y.Inverter_Enable = true;
+
+    /* Outport: '<Root>/State_Enum' */
     HCU_V2_Simulink_Y.State_Enum = 5U;
   } else if (HCU_V2_Simulink_Y.BMS_Fault) {
     HCU_V2_Simulink_DW.temporalCounter_i1 = 0U;
     HCU_V2_Simulink_DW.is_c3_HCU_V2_Simulink = HCU__IN_VALIDATING_ERROR_STATE1;
   } else if (!HCU_V2_Simulink_U.SDC_Monitor) {
     HCU_V2_Simulink_DW.is_c3_HCU_V2_Simulink = HCU_V2_Simulink_IN_HV_OFF;
+
+    /* Outport: '<Root>/AIR_Enable' */
     HCU_V2_Simulink_Y.AIR_Enable = false;
+
+    /* Outport: '<Root>/Pre_Charge_Enable' */
     HCU_V2_Simulink_Y.Pre_Charge_Enable = false;
+
+    /* Outport: '<Root>/Inverter_Enable' */
     HCU_V2_Simulink_Y.Inverter_Enable = false;
+
+    /* Outport: '<Root>/State_Enum' */
     HCU_V2_Simulink_Y.State_Enum = 1U;
   }
 
-  /* End of Outport: '<Root>/Engine_Synced' */
+  /* End of Inport: '<Root>/SDC_Monitor' */
 }
 
 /* Function for Chart: '<S5>/Safety_Supervisor' */
-static void HCU_V2_Simulink_STANDBY(const real32_T *Switch2)
+static void HCU_V2_Simulink_STANDBY(const boolean_T *OR_e, const real32_T
+  *Switch2)
 {
   /* Outport: '<Root>/State_Enum' */
-  HCU_V2_Simulink_Y.State_Enum = 2U;
-
-  /* Inport: '<Root>/Start_Button' incorporates:
-   *  Inport: '<Root>/SDC_Monitor'
+  /* Inport: '<Root>/SDC_Monitor' incorporates:
    *  Outport: '<Root>/APPS_Implausibility'
    *  Outport: '<Root>/BMS_Fault'
    */
-  if ((*Switch2 > 10.0F) && HCU_V2_Simulink_U.Start_Button) {
+  HCU_V2_Simulink_Y.State_Enum = 2U;
+  if ((*Switch2 > 10.0F) && (*OR_e)) {
     HCU_V2_Simulink_DW.temporalCounter_i1 = 0U;
     HCU_V2_Simulink_DW.is_c3_HCU_V2_Simulink = HCU_V2_Simulink_IN_PRE_CHARGE;
 
@@ -295,7 +303,7 @@ static void HCU_V2_Simulink_STANDBY(const real32_T *Switch2)
     HCU_V2_Simulink_Y.State_Enum = 1U;
   }
 
-  /* End of Inport: '<Root>/Start_Button' */
+  /* End of Inport: '<Root>/SDC_Monitor' */
 }
 
 /* Model step function */
@@ -303,15 +311,19 @@ void HCU_V2_Simulink_step(void)
 {
   int32_T i;
   int32_T rtb_Switch1;
+  int32_T tmp;
   real32_T Switch2;
   real32_T cutoff;
-  real32_T rtb_Subtract;
+  real32_T rtb_Regen_Shape;
   uint16_T rtb_y;
-  uint16_T rtb_y_l;
+  uint16_T rtb_y_hv;
   uint16_T rtb_y_n;
-  boolean_T rtb_Compare_df;
+  boolean_T OR;
+  boolean_T OR_e;
+  boolean_T rtb_Compare_dm;
+  boolean_T rtb_Compare_dt;
   boolean_T rtb_Compare_h;
-  boolean_T rtb_Compare_n;
+  boolean_T rtb_Compare_ph;
 
   /* SignalConversion generated from: '<S6>/Vector Concatenate2' incorporates:
    *  Concatenate: '<S6>/Vector Concatenate2'
@@ -418,17 +430,17 @@ void HCU_V2_Simulink_step(void)
    */
   HCU_V2_Simulink_B.VectorConcatenate1[7] = 0U;
 
-  /* RelationalOperator: '<S12>/Compare' incorporates:
-   *  Constant: '<S12>/Constant'
+  /* RelationalOperator: '<S13>/Compare' incorporates:
+   *  Constant: '<S13>/Constant'
    *  Inport: '<Root>/APPS_age'
    */
-  rtb_Compare_df = (HCU_V2_Simulink_U.APPS_age < 50U);
+  rtb_Compare_dt = (HCU_V2_Simulink_U.APPS_age < 50U);
 
   /* Outputs for Atomic SubSystem: '<S2>/Bit Shift1' */
   /* DataTypeConversion: '<S2>/Data Type Conversion3' incorporates:
    *  Inport: '<Root>/ECU_Misc'
    */
-  rtb_y_l = HCU_V2_Simulink_BitShift((uint16_T)HCU_V2_Simulink_U.ECU_Misc[2]);
+  rtb_y_hv = HCU_V2_Simulink_BitShift((uint16_T)HCU_V2_Simulink_U.ECU_Misc[2]);
 
   /* End of Outputs for SubSystem: '<S2>/Bit Shift1' */
 
@@ -457,7 +469,7 @@ void HCU_V2_Simulink_step(void)
    *  Inport: '<Root>/APPS'
    *  S-Function (sfix_bitop): '<S1>/Bitwise OR'
    */
-  if (rtb_Compare_df) {
+  if (rtb_Compare_dt) {
     HCU_V2_Simulink_Y.Velocity_0 = (real32_T)(int16_T)((uint32_T)rtb_y_n |
       HCU_V2_Simulink_U.APPS[1]) * 0.0122070312F;
   } else {
@@ -474,41 +486,44 @@ void HCU_V2_Simulink_step(void)
 
   /* End of Outputs for SubSystem: '<S1>/Bit Shift1' */
 
-  /* Switch: '<S1>/Switch1' incorporates:
-   *  Constant: '<S1>/Constant'
-   *  DataTypeConversion: '<S1>/Data Type Conversion5'
-   *  DataTypeConversion: '<S1>/Data Type Conversion6'
-   *  DataTypeConversion: '<S1>/Data Type Conversion7'
-   *  Gain: '<S1>/Gain1'
-   *  Inport: '<Root>/APPS'
-   *  S-Function (sfix_bitop): '<S1>/Bitwise OR1'
-   */
-  if (rtb_Compare_df) {
-    HCU_V2_Simulink_Y.Velocity_1 = (real32_T)(int16_T)((uint32_T)rtb_y_n |
-      HCU_V2_Simulink_U.APPS[3]) * 0.0122070312F;
+  /* Switch: '<S1>/Switch1' */
+  if (rtb_Compare_dt) {
+    /* Product: '<S37>/Product4' incorporates:
+     *  DataTypeConversion: '<S1>/Data Type Conversion5'
+     *  DataTypeConversion: '<S1>/Data Type Conversion6'
+     *  DataTypeConversion: '<S1>/Data Type Conversion7'
+     *  Gain: '<S1>/Gain1'
+     *  Inport: '<Root>/APPS'
+     *  S-Function (sfix_bitop): '<S1>/Bitwise OR1'
+     */
+    HCU_V2_Simulink_Y.Base_Torque_Demand = (real32_T)(int16_T)((uint32_T)rtb_y_n
+      | HCU_V2_Simulink_U.APPS[3]) * 0.0122070312F;
   } else {
-    HCU_V2_Simulink_Y.Velocity_1 = 0.0F;
+    /* Product: '<S37>/Product4' incorporates:
+     *  Constant: '<S1>/Constant'
+     */
+    HCU_V2_Simulink_Y.Base_Torque_Demand = 0.0F;
   }
 
   /* End of Switch: '<S1>/Switch1' */
 
   /* Outport: '<Root>/APPS_Implausibility' incorporates:
-   *  Abs: '<S33>/Abs'
-   *  Constant: '<S40>/Constant'
-   *  RelationalOperator: '<S40>/Compare'
-   *  Sum: '<S33>/Subtract'
+   *  Abs: '<S35>/Abs'
+   *  Constant: '<S42>/Constant'
+   *  RelationalOperator: '<S42>/Compare'
+   *  Sum: '<S35>/Subtract'
    */
   HCU_V2_Simulink_Y.APPS_Implausibility = (fabsf(HCU_V2_Simulink_Y.Velocity_0 -
-    HCU_V2_Simulink_Y.Velocity_1) > 10.0F);
+    HCU_V2_Simulink_Y.Base_Torque_Demand) > 10.0F);
 
-  /* RelationalOperator: '<S18>/Compare' incorporates:
-   *  Constant: '<S18>/Constant'
+  /* RelationalOperator: '<S20>/Compare' incorporates:
+   *  Constant: '<S20>/Constant'
    *  Inport: '<Root>/ECU_Misc_age'
    */
-  rtb_Compare_df = (HCU_V2_Simulink_U.ECU_Misc_age < 50U);
+  rtb_Compare_ph = (HCU_V2_Simulink_U.ECU_Misc_age < 50U);
 
   /* Switch: '<S2>/Switch2' */
-  if (rtb_Compare_df) {
+  if (rtb_Compare_ph) {
     /* Switch: '<S2>/Switch2' incorporates:
      *  DataTypeConversion: '<S2>/Data Type Conversion10'
      *  DataTypeConversion: '<S2>/Data Type Conversion11'
@@ -528,9 +543,17 @@ void HCU_V2_Simulink_step(void)
 
   /* End of Switch: '<S2>/Switch2' */
 
+  /* Outputs for Atomic SubSystem: '<S1>/Bit Shift2' */
+  /* DataTypeConversion: '<S1>/Data Type Conversion8' incorporates:
+   *  Inport: '<Root>/APPS'
+   */
+  rtb_y = HCU_V2_Simulink_BitShift((uint16_T)HCU_V2_Simulink_U.APPS[4]);
+
+  /* End of Outputs for SubSystem: '<S1>/Bit Shift2' */
+
   /* Outputs for Atomic SubSystem: '<S3>/Bit Shift2' */
   /* Inport: '<Root>/BMS_Limits' */
-  rtb_y = HCU_V2_Simulink_BitShift(HCU_V2_Simulink_U.BMS_Limits[5]);
+  rtb_y_n = HCU_V2_Simulink_BitShift(HCU_V2_Simulink_U.BMS_Limits[5]);
 
   /* End of Outputs for SubSystem: '<S3>/Bit Shift2' */
 
@@ -540,28 +563,29 @@ void HCU_V2_Simulink_step(void)
    *  Inport: '<Root>/BMS_Limits'
    *  S-Function (sfix_bitop): '<S3>/Bitwise OR2'
    */
-  HCU_V2_Simulink_Y.Pack_Voltage = (real32_T)(uint16_T)(rtb_y |
+  HCU_V2_Simulink_Y.Pack_Voltage = (real32_T)(uint16_T)(rtb_y_n |
     HCU_V2_Simulink_U.BMS_Limits[4]) * 0.1F;
 
   /* Outputs for Atomic SubSystem: '<S3>/Bit Shift' */
   /* Inport: '<Root>/BMS_Limits' */
-  rtb_y = HCU_V2_Simulink_BitShift(HCU_V2_Simulink_U.BMS_Limits[1]);
+  rtb_y_n = HCU_V2_Simulink_BitShift(HCU_V2_Simulink_U.BMS_Limits[1]);
 
   /* End of Outputs for SubSystem: '<S3>/Bit Shift' */
 
-  /* RelationalOperator: '<S25>/Compare' incorporates:
-   *  Constant: '<S25>/Constant'
+  /* RelationalOperator: '<S38>/Compare' incorporates:
+   *  Constant: '<S27>/Constant'
    *  Inport: '<Root>/BMS_Limits_age'
+   *  RelationalOperator: '<S27>/Compare'
    */
-  rtb_Compare_n = (HCU_V2_Simulink_U.BMS_Limits_age < 350U);
+  HCU_V2_Simulink_Y.Engine_Synced = (HCU_V2_Simulink_U.BMS_Limits_age < 350U);
 
   /* Switch: '<S3>/Switch' incorporates:
    *  Constant: '<S3>/Constant1'
    *  Inport: '<Root>/BMS_Limits'
    *  S-Function (sfix_bitop): '<S3>/Bitwise OR'
    */
-  if (rtb_Compare_n) {
-    i = (uint16_T)(rtb_y | HCU_V2_Simulink_U.BMS_Limits[0]);
+  if (HCU_V2_Simulink_Y.Engine_Synced) {
+    i = (uint16_T)(rtb_y_n | HCU_V2_Simulink_U.BMS_Limits[0]);
   } else {
     i = 0;
   }
@@ -570,7 +594,7 @@ void HCU_V2_Simulink_step(void)
 
   /* Outputs for Atomic SubSystem: '<S3>/Bit Shift1' */
   /* Inport: '<Root>/BMS_Limits' */
-  rtb_y = HCU_V2_Simulink_BitShift(HCU_V2_Simulink_U.BMS_Limits[3]);
+  rtb_y_n = HCU_V2_Simulink_BitShift(HCU_V2_Simulink_U.BMS_Limits[3]);
 
   /* End of Outputs for SubSystem: '<S3>/Bit Shift1' */
 
@@ -579,8 +603,8 @@ void HCU_V2_Simulink_step(void)
    *  Inport: '<Root>/BMS_Limits'
    *  S-Function (sfix_bitop): '<S3>/Bitwise OR1'
    */
-  if (rtb_Compare_n) {
-    rtb_Switch1 = (uint16_T)(rtb_y | HCU_V2_Simulink_U.BMS_Limits[2]);
+  if (HCU_V2_Simulink_Y.Engine_Synced) {
+    rtb_Switch1 = (uint16_T)(rtb_y_n | HCU_V2_Simulink_U.BMS_Limits[2]);
   } else {
     rtb_Switch1 = 0;
   }
@@ -588,11 +612,11 @@ void HCU_V2_Simulink_step(void)
   /* End of Switch: '<S3>/Switch1' */
 
   /* Outport: '<Root>/BMS_Fault' incorporates:
-   *  Constant: '<S41>/Constant'
-   *  Constant: '<S42>/Constant'
-   *  Logic: '<S34>/AND'
-   *  RelationalOperator: '<S41>/Compare'
-   *  RelationalOperator: '<S42>/Compare'
+   *  Constant: '<S43>/Constant'
+   *  Constant: '<S44>/Constant'
+   *  Logic: '<S36>/AND'
+   *  RelationalOperator: '<S43>/Compare'
+   *  RelationalOperator: '<S44>/Compare'
    */
   HCU_V2_Simulink_Y.BMS_Fault = ((i == 0) && (rtb_Switch1 == 0));
 
@@ -600,36 +624,46 @@ void HCU_V2_Simulink_step(void)
   /* DataTypeConversion: '<S2>/Data Type Conversion' incorporates:
    *  Inport: '<Root>/ECU_Misc'
    */
-  rtb_y = HCU_V2_Simulink_BitShift((uint16_T)HCU_V2_Simulink_U.ECU_Misc[0]);
+  rtb_y_n = HCU_V2_Simulink_BitShift((uint16_T)HCU_V2_Simulink_U.ECU_Misc[0]);
 
   /* End of Outputs for SubSystem: '<S2>/Bit Shift' */
 
   /* Switch: '<S2>/Switch' */
-  if (rtb_Compare_df) {
-    /* Product: '<S44>/delta fall limit' incorporates:
+  if (rtb_Compare_ph) {
+    /* Product: '<S46>/delta fall limit' incorporates:
      *  DataTypeConversion: '<S2>/Data Type Conversion1'
      *  DataTypeConversion: '<S2>/Data Type Conversion2'
      *  DataTypeConversion: '<S2>/Data Type Conversion4'
      *  Inport: '<Root>/ECU_Misc'
      *  S-Function (sfix_bitop): '<S2>/Bitwise OR'
      */
-    HCU_V2_Simulink_Y.Base_Torque_Demand = (int16_T)((uint32_T)rtb_y |
+    HCU_V2_Simulink_Y.Velocity_1 = (int16_T)((uint32_T)rtb_y_n |
       HCU_V2_Simulink_U.ECU_Misc[1]);
   } else {
-    /* Product: '<S44>/delta fall limit' incorporates:
+    /* Product: '<S46>/delta fall limit' incorporates:
      *  Constant: '<S2>/Constant'
      */
-    HCU_V2_Simulink_Y.Base_Torque_Demand = 0.0F;
+    HCU_V2_Simulink_Y.Velocity_1 = 0.0F;
   }
 
   /* End of Switch: '<S2>/Switch' */
 
-  /* Outport: '<Root>/Engine_Synced' incorporates:
-   *  Constant: '<S36>/Constant'
-   *  RelationalOperator: '<S36>/Compare'
+  /* RelationalOperator: '<S38>/Compare' incorporates:
+   *  Constant: '<S38>/Constant'
    */
-  HCU_V2_Simulink_Y.Engine_Synced = (HCU_V2_Simulink_Y.Base_Torque_Demand ==
-    3.0F);
+  HCU_V2_Simulink_Y.Engine_Synced = (HCU_V2_Simulink_Y.Velocity_1 == 3.0F);
+
+  /* Logic: '<S5>/OR' incorporates:
+   *  Inport: '<Root>/Bench_Engine_Off'
+   */
+  OR = (HCU_V2_Simulink_Y.Engine_Synced || (HCU_V2_Simulink_U.Bench_Engine_Off
+         != 0.0F));
+
+  /* Logic: '<Root>/OR' incorporates:
+   *  Inport: '<Root>/Start_Button'
+   *  Inport: '<Root>/Start_Button_GUI'
+   */
+  OR_e = (HCU_V2_Simulink_U.Start_Button_GUI || HCU_V2_Simulink_U.Start_Button);
 
   /* MATLAB Function: '<S7>/MATLAB Function' incorporates:
    *  Inport: '<Root>/ODrive_0_VI'
@@ -637,14 +671,14 @@ void HCU_V2_Simulink_step(void)
   HCU_V2_Simulin_MATLABFunction_i(HCU_V2_Simulink_U.ODrive_0_VI,
     &HCU_V2_Simulink_Y.Bus_Current_1, &HCU_V2_Simulink_Y.Bus_Current_0);
 
-  /* RelationalOperator: '<S51>/Compare' incorporates:
-   *  Constant: '<S51>/Constant'
+  /* RelationalOperator: '<S57>/Compare' incorporates:
+   *  Constant: '<S57>/Constant'
    *  Inport: '<Root>/ODrive_0_VI_age'
    */
-  rtb_Compare_n = (HCU_V2_Simulink_U.ODrive_0_VI_age <= 120U);
+  rtb_Compare_h = (HCU_V2_Simulink_U.ODrive_0_VI_age <= 120U);
 
   /* Switch: '<S7>/Switch' */
-  if (rtb_Compare_n) {
+  if (rtb_Compare_h) {
     /* Outport: '<Root>/Bus_Voltage_0' */
     HCU_V2_Simulink_Y.Bus_Voltage_0 = HCU_V2_Simulink_Y.Bus_Current_1;
   } else {
@@ -660,18 +694,18 @@ void HCU_V2_Simulink_step(void)
    *  Inport: '<Root>/ODrive_1_VI'
    */
   HCU_V2_Simulin_MATLABFunction_i(HCU_V2_Simulink_U.ODrive_1_VI,
-    &HCU_V2_Simulink_Y.Base_Torque_Demand, &HCU_V2_Simulink_Y.Bus_Current_1);
+    &HCU_V2_Simulink_Y.Velocity_1, &HCU_V2_Simulink_Y.Bus_Current_1);
 
-  /* RelationalOperator: '<S52>/Compare' incorporates:
-   *  Constant: '<S52>/Constant'
+  /* RelationalOperator: '<S58>/Compare' incorporates:
+   *  Constant: '<S58>/Constant'
    *  Inport: '<Root>/ODrive_1_VI_age'
    */
-  rtb_Compare_h = (HCU_V2_Simulink_U.ODrive_1_VI_age <= 120U);
+  rtb_Compare_dm = (HCU_V2_Simulink_U.ODrive_1_VI_age <= 120U);
 
   /* Switch: '<S7>/Switch2' */
-  if (rtb_Compare_h) {
+  if (rtb_Compare_dm) {
     /* Outport: '<Root>/Bus_Voltage_1' */
-    HCU_V2_Simulink_Y.Bus_Voltage_1 = HCU_V2_Simulink_Y.Base_Torque_Demand;
+    HCU_V2_Simulink_Y.Bus_Voltage_1 = HCU_V2_Simulink_Y.Velocity_1;
   } else {
     /* Outport: '<Root>/Bus_Voltage_1' incorporates:
      *  Constant: '<S7>/Constant1'
@@ -784,11 +818,11 @@ void HCU_V2_Simulink_step(void)
       break;
 
      case HCU_V2_Simulink_IN_RELAY_SWAP:
-      HCU_V2_Simulink_RELAY_SWAP();
+      HCU_V2_Simulink_RELAY_SWAP(&OR);
       break;
 
      case HCU_V2_Simulink_IN_STANDBY:
-      HCU_V2_Simulink_STANDBY(&Switch2);
+      HCU_V2_Simulink_STANDBY(&OR_e, &Switch2);
       break;
 
      case IN_VALIDATING_APPS_IMPLAUSIBILI:
@@ -1032,112 +1066,169 @@ void HCU_V2_Simulink_step(void)
   HCU_V2_Simulink_Y.Set_Axis_State_1_req = (HCU_V2_Simulink_B.Switch_e !=
     HCU_V2_Simulink_U.ODrive_1_Heartbeat[4]);
 
-  /* Lookup_n-D: '<S35>/Regen_Shape' incorporates:
+  /* Lookup_n-D: '<S37>/Regen_Shape' incorporates:
    *  Switch: '<S2>/Switch2'
    */
-  Switch2 = look1_iflf_binlcpw(Switch2,
+  rtb_Regen_Shape = look1_iflf_binlcpw(Switch2,
     HCU_V2_Simulink_ConstP.Regen_Shape_bp01Data,
     HCU_V2_Simulink_ConstP.Regen_Shape_tableData, 5U);
 
-  /* MinMax: '<S33>/Min' */
+  /* MinMax: '<S35>/Min' */
   HCU_V2_Simulink_Y.APPS_Clean = fminf(HCU_V2_Simulink_Y.Velocity_0,
-    HCU_V2_Simulink_Y.Velocity_1);
+    HCU_V2_Simulink_Y.Base_Torque_Demand);
 
-  /* Switch: '<S35>/Switch' incorporates:
-   *  Constant: '<S43>/Constant'
-   *  Inport: '<Root>/Motor_Regen_Max'
-   *  Inport: '<Root>/Motor_Torque_Max'
-   *  Lookup_n-D: '<S35>/Accel_Shape'
-   *  MinMax: '<S33>/Min'
-   *  Product: '<S35>/Product'
-   *  Product: '<S35>/Product1'
-   *  RelationalOperator: '<S43>/Compare'
-   *  UnaryMinus: '<S35>/Unary Minus'
-   */
-  if (Switch2 > 0.0F) {
-    Switch2 = -(Switch2 * HCU_V2_Simulink_U.Motor_Regen_Max);
+  /* Switch: '<S1>/Switch2' */
+  if (rtb_Compare_dt) {
+    /* Product: '<S46>/delta fall limit' incorporates:
+     *  DataTypeConversion: '<S1>/Data Type Conversion10'
+     *  DataTypeConversion: '<S1>/Data Type Conversion11'
+     *  DataTypeConversion: '<S1>/Data Type Conversion9'
+     *  Gain: '<S1>/Gain2'
+     *  Inport: '<Root>/APPS'
+     *  S-Function (sfix_bitop): '<S1>/Bitwise OR2'
+     */
+    HCU_V2_Simulink_Y.Velocity_1 = (real32_T)(int16_T)((uint32_T)rtb_y |
+      HCU_V2_Simulink_U.APPS[5]) * 0.036F;
   } else {
-    Switch2 = look1_iflf_binlcpw(HCU_V2_Simulink_Y.APPS_Clean,
-      HCU_V2_Simulink_ConstP.Accel_Shape_bp01Data,
-      HCU_V2_Simulink_ConstP.Accel_Shape_tableData, 6U) *
-      HCU_V2_Simulink_U.Motor_Torque_Max;
+    /* Product: '<S46>/delta fall limit' incorporates:
+     *  Constant: '<S1>/Constant'
+     */
+    HCU_V2_Simulink_Y.Velocity_1 = 0.0F;
   }
 
-  /* End of Switch: '<S35>/Switch' */
+  /* End of Switch: '<S1>/Switch2' */
 
-  /* Delay: '<S44>/Delay' */
+  /* Relay: '<S37>/Relay' */
+  HCU_V2_Simulink_DW.Relay_Mode = ((HCU_V2_Simulink_Y.Velocity_1 >= 5.0F) ||
+    ((!(HCU_V2_Simulink_Y.Velocity_1 <= 3.0F)) && HCU_V2_Simulink_DW.Relay_Mode));
+
+  /* Switch: '<S37>/Switch' incorporates:
+   *  Constant: '<S45>/Constant'
+   *  Inport: '<Root>/Bench_Speed_Bypass'
+   *  Inport: '<Root>/Motor_Regen_Max'
+   *  Inport: '<Root>/Motor_Torque_Max'
+   *  Lookup_n-D: '<S37>/Accel_Shape'
+   *  MinMax: '<S35>/Min'
+   *  Product: '<S37>/Product'
+   *  Product: '<S37>/Product1'
+   *  Product: '<S37>/Product3'
+   *  RelationalOperator: '<S45>/Compare'
+   *  Switch: '<S37>/Switch1'
+   *  UnaryMinus: '<S37>/Unary Minus'
+   */
+  if (rtb_Regen_Shape > 0.0F) {
+    rtb_Regen_Shape = -(rtb_Regen_Shape * HCU_V2_Simulink_U.Motor_Regen_Max);
+  } else {
+    if (HCU_V2_Simulink_U.Bench_Speed_Bypass > 0.0) {
+      /* Switch: '<S37>/Switch1' incorporates:
+       *  Constant: '<S37>/Constant'
+       */
+      tmp = 1;
+    } else {
+      /* Switch: '<S37>/Switch1' incorporates:
+       *  Relay: '<S37>/Relay'
+       */
+      tmp = HCU_V2_Simulink_DW.Relay_Mode;
+    }
+
+    rtb_Regen_Shape = look1_iflf_binlcpw(HCU_V2_Simulink_Y.APPS_Clean,
+      HCU_V2_Simulink_ConstP.Accel_Shape_bp01Data,
+      HCU_V2_Simulink_ConstP.Accel_Shape_tableData, 6U) *
+      HCU_V2_Simulink_U.Motor_Torque_Max * (real32_T)tmp;
+  }
+
+  /* End of Switch: '<S37>/Switch' */
+
+  /* Delay: '<S46>/Delay' */
   if (HCU_V2_Simulink_DW.icLoad) {
-    /* Sum: '<S44>/Difference Inputs2'
+    /* Sum: '<S46>/Difference Inputs2'
      *
-     * Block description for '<S44>/Difference Inputs2':
+     * Block description for '<S46>/Difference Inputs2':
      *
      *  Add in CPU
      */
-    HCU_V2_Simulink_DW.Delay_DSTATE = Switch2;
+    HCU_V2_Simulink_DW.Delay_DSTATE = rtb_Regen_Shape;
   }
 
-  /* Product: '<S44>/delta fall limit' incorporates:
+  /* Product: '<S46>/delta fall limit' incorporates:
    *  Inport: '<Root>/Torque_Rate_Up'
-   *  Product: '<S44>/delta rise limit'
-   *  SampleTimeMath: '<S44>/sample time'
+   *  Product: '<S46>/delta rise limit'
+   *  SampleTimeMath: '<S46>/sample time'
    *
-   * About '<S44>/sample time':
+   * About '<S46>/sample time':
    *  y = K where K = ( w * Ts )
    *   */
-  HCU_V2_Simulink_Y.Base_Torque_Demand = HCU_V2_Simulink_U.Torque_Rate_Up *
-    0.01F;
+  HCU_V2_Simulink_Y.Velocity_1 = HCU_V2_Simulink_U.Torque_Rate_Up * 0.01F;
 
-  /* Sum: '<S44>/Difference Inputs1' incorporates:
-   *  Delay: '<S44>/Delay'
+  /* Sum: '<S46>/Difference Inputs1' incorporates:
+   *  Delay: '<S46>/Delay'
    *
-   * Block description for '<S44>/Difference Inputs1':
+   * Block description for '<S46>/Difference Inputs1':
    *
    *  Add in CPU
    */
-  Switch2 -= HCU_V2_Simulink_DW.Delay_DSTATE;
+  rtb_Regen_Shape -= HCU_V2_Simulink_DW.Delay_DSTATE;
 
-  /* Switch: '<S45>/Switch2' incorporates:
-   *  RelationalOperator: '<S45>/LowerRelop1'
+  /* Switch: '<S48>/Switch2' incorporates:
+   *  RelationalOperator: '<S48>/LowerRelop1'
    */
-  if (!(Switch2 > HCU_V2_Simulink_Y.Base_Torque_Demand)) {
-    /* Product: '<S44>/delta fall limit' incorporates:
+  if (!(rtb_Regen_Shape > HCU_V2_Simulink_Y.Velocity_1)) {
+    /* Product: '<S46>/delta fall limit' incorporates:
      *  Inport: '<Root>/Torque_Rate_Down'
-     *  SampleTimeMath: '<S44>/sample time'
+     *  SampleTimeMath: '<S46>/sample time'
      *
-     * About '<S44>/sample time':
+     * About '<S46>/sample time':
      *  y = K where K = ( w * Ts )
      *   */
-    HCU_V2_Simulink_Y.Base_Torque_Demand = 0.01F *
-      HCU_V2_Simulink_U.Torque_Rate_Down;
+    HCU_V2_Simulink_Y.Velocity_1 = 0.01F * HCU_V2_Simulink_U.Torque_Rate_Down;
 
-    /* Switch: '<S45>/Switch' incorporates:
-     *  RelationalOperator: '<S45>/UpperRelop'
+    /* Switch: '<S48>/Switch' incorporates:
+     *  RelationalOperator: '<S48>/UpperRelop'
      */
-    if (!(Switch2 < HCU_V2_Simulink_Y.Base_Torque_Demand)) {
-      /* Product: '<S44>/delta fall limit' */
-      HCU_V2_Simulink_Y.Base_Torque_Demand = Switch2;
+    if (!(rtb_Regen_Shape < HCU_V2_Simulink_Y.Velocity_1)) {
+      /* Product: '<S46>/delta fall limit' */
+      HCU_V2_Simulink_Y.Velocity_1 = rtb_Regen_Shape;
     }
 
-    /* End of Switch: '<S45>/Switch' */
+    /* End of Switch: '<S48>/Switch' */
   }
 
-  /* End of Switch: '<S45>/Switch2' */
+  /* End of Switch: '<S48>/Switch2' */
 
-  /* Sum: '<S44>/Difference Inputs2' incorporates:
-   *  Delay: '<S44>/Delay'
+  /* Sum: '<S46>/Difference Inputs2' incorporates:
+   *  Delay: '<S46>/Delay'
    *
-   * Block description for '<S44>/Difference Inputs2':
+   * Block description for '<S46>/Difference Inputs2':
    *
    *  Add in CPU
    */
-  HCU_V2_Simulink_DW.Delay_DSTATE += HCU_V2_Simulink_Y.Base_Torque_Demand;
+  HCU_V2_Simulink_DW.Delay_DSTATE += HCU_V2_Simulink_Y.Velocity_1;
 
-  /* Product: '<S44>/delta fall limit' incorporates:
+  /* Logic: '<S47>/OR' incorporates:
+   *  Constant: '<S49>/Constant'
+   *  Constant: '<S50>/Constant'
+   *  Constant: '<S51>/Constant'
+   *  Logic: '<S47>/AND'
+   *  Logic: '<S47>/AND1'
+   *  Logic: '<S47>/NOT1'
+   *  RelationalOperator: '<S49>/Compare'
+   *  RelationalOperator: '<S50>/Compare'
+   *  RelationalOperator: '<S51>/Compare'
+   *  UnitDelay: '<S47>/Unit Delay'
+   */
+  HCU_V2_Simulink_DW.UnitDelay_DSTATE = (((Switch2 >= 25.0F) &&
+    (HCU_V2_Simulink_Y.APPS_Clean >= 20.0F)) || ((!(HCU_V2_Simulink_Y.APPS_Clean
+    <= 5.0F)) && HCU_V2_Simulink_DW.UnitDelay_DSTATE));
+
+  /* Product: '<S37>/Product4' incorporates:
+   *  Logic: '<S47>/NOT2'
    *  Outport: '<Root>/Inverter_Enable'
-   *  Product: '<S35>/Product2'
+   *  Product: '<S37>/Product2'
+   *  UnitDelay: '<S47>/Unit Delay'
    */
   HCU_V2_Simulink_Y.Base_Torque_Demand = HCU_V2_Simulink_DW.Delay_DSTATE *
-    (real32_T)HCU_V2_Simulink_Y.Inverter_Enable;
+    (real32_T)HCU_V2_Simulink_Y.Inverter_Enable * (real32_T)
+    !HCU_V2_Simulink_DW.UnitDelay_DSTATE;
 
   /* Switch: '<S2>/Switch1' incorporates:
    *  Constant: '<S2>/Constant'
@@ -1148,83 +1239,84 @@ void HCU_V2_Simulink_step(void)
    *  Inport: '<Root>/ECU_Misc'
    *  S-Function (sfix_bitop): '<S2>/Bitwise OR1'
    */
-  if (rtb_Compare_df) {
-    Switch2 = (real32_T)(int16_T)((uint32_T)rtb_y_l |
+  if (rtb_Compare_ph) {
+    Switch2 = (real32_T)(int16_T)((uint32_T)rtb_y_hv |
       HCU_V2_Simulink_U.ECU_Misc[3]) * 0.03125F;
   } else {
     Switch2 = 0.0F;
   }
 
-  /* Sum: '<S39>/Subtract' incorporates:
+  /* Sum: '<S41>/Subtract' incorporates:
    *  Inport: '<Root>/Steering_Centre'
    *  Switch: '<S2>/Switch1'
    */
-  rtb_Subtract = Switch2 - HCU_V2_Simulink_U.Steering_Centre;
+  rtb_Regen_Shape = Switch2 - HCU_V2_Simulink_U.Steering_Centre;
 
-  /* Switch: '<S47>/Switch' incorporates:
+  /* Switch: '<S53>/Switch' incorporates:
    *  Inport: '<Root>/Steering_Deadzone'
-   *  RelationalOperator: '<S47>/u_GTE_up'
-   *  RelationalOperator: '<S47>/u_GT_lo'
-   *  Switch: '<S47>/Switch1'
-   *  UnaryMinus: '<S39>/Unary Minus'
+   *  RelationalOperator: '<S53>/u_GTE_up'
+   *  RelationalOperator: '<S53>/u_GT_lo'
+   *  Switch: '<S53>/Switch1'
+   *  UnaryMinus: '<S41>/Unary Minus'
    */
-  if (rtb_Subtract >= HCU_V2_Simulink_U.Steering_Deadzone) {
+  if (rtb_Regen_Shape >= HCU_V2_Simulink_U.Steering_Deadzone) {
     Switch2 = HCU_V2_Simulink_U.Steering_Deadzone;
-  } else if (rtb_Subtract > -HCU_V2_Simulink_U.Steering_Deadzone) {
-    /* Switch: '<S47>/Switch1' */
-    Switch2 = rtb_Subtract;
+  } else if (rtb_Regen_Shape > -HCU_V2_Simulink_U.Steering_Deadzone) {
+    /* Switch: '<S53>/Switch1' */
+    Switch2 = rtb_Regen_Shape;
   } else {
     Switch2 = -HCU_V2_Simulink_U.Steering_Deadzone;
   }
 
-  /* Product: '<S39>/Product' incorporates:
+  /* Product: '<S41>/Product' incorporates:
    *  Inport: '<Root>/TV_Gain'
-   *  Sum: '<S47>/Diff'
-   *  Switch: '<S47>/Switch'
+   *  Sum: '<S53>/Diff'
+   *  Switch: '<S53>/Switch'
    */
-  HCU_V2_Simulink_Y.Delta_Torque = (rtb_Subtract - Switch2) *
+  HCU_V2_Simulink_Y.Delta_Torque = (rtb_Regen_Shape - Switch2) *
     HCU_V2_Simulink_U.TV_Gain;
 
-  /* Switch: '<S39>/Switch' incorporates:
-   *  Constant: '<S39>/Constant'
-   *  Constant: '<S46>/Constant'
-   *  RelationalOperator: '<S46>/Compare'
+  /* Switch: '<S41>/Switch' incorporates:
+   *  Constant: '<S41>/Constant'
+   *  Constant: '<S52>/Constant'
+   *  RelationalOperator: '<S52>/Compare'
    */
   if (HCU_V2_Simulink_Y.Base_Torque_Demand >= 0.0F) {
-    /* Switch: '<S48>/Switch2' incorporates:
+    /* Switch: '<S54>/Switch2' incorporates:
      *  Inport: '<Root>/Max_Torque_Split'
-     *  RelationalOperator: '<S48>/LowerRelop1'
-     *  RelationalOperator: '<S48>/UpperRelop'
-     *  Switch: '<S48>/Switch'
-     *  UnaryMinus: '<S39>/Unary Minus1'
+     *  RelationalOperator: '<S54>/LowerRelop1'
+     *  RelationalOperator: '<S54>/UpperRelop'
+     *  Switch: '<S54>/Switch'
+     *  UnaryMinus: '<S41>/Unary Minus1'
      */
     if (HCU_V2_Simulink_Y.Delta_Torque > HCU_V2_Simulink_U.Max_Torque_Split) {
       Switch2 = HCU_V2_Simulink_U.Max_Torque_Split;
     } else if (HCU_V2_Simulink_Y.Delta_Torque <
                -HCU_V2_Simulink_U.Max_Torque_Split) {
-      /* Switch: '<S48>/Switch' incorporates:
-       *  UnaryMinus: '<S39>/Unary Minus1'
+      /* Switch: '<S54>/Switch' incorporates:
+       *  UnaryMinus: '<S41>/Unary Minus1'
        */
       Switch2 = -HCU_V2_Simulink_U.Max_Torque_Split;
     } else {
       Switch2 = HCU_V2_Simulink_Y.Delta_Torque;
     }
 
-    /* End of Switch: '<S48>/Switch2' */
+    /* End of Switch: '<S54>/Switch2' */
   } else {
     Switch2 = 0.0F;
   }
 
-  /* Gain: '<S39>/Gain' incorporates:
-   *  Switch: '<S39>/Switch'
+  /* Product: '<S46>/delta fall limit' incorporates:
+   *  Gain: '<S41>/Gain'
+   *  Switch: '<S41>/Switch'
    */
   HCU_V2_Simulink_Y.Velocity_1 = 0.5F * Switch2;
 
-  /* Sum: '<S39>/Subtract1' */
+  /* Sum: '<S41>/Subtract1' */
   Switch2 = HCU_V2_Simulink_Y.Base_Torque_Demand - HCU_V2_Simulink_Y.Velocity_1;
 
-  /* Sum: '<S39>/Add' */
-  rtb_Subtract = HCU_V2_Simulink_Y.Velocity_1 +
+  /* Sum: '<S41>/Add' */
+  rtb_Regen_Shape = HCU_V2_Simulink_Y.Velocity_1 +
     HCU_V2_Simulink_Y.Base_Torque_Demand;
 
   /* MATLAB Function: '<S4>/MATLAB Function' incorporates:
@@ -1234,10 +1326,10 @@ void HCU_V2_Simulink_step(void)
     &HCU_V2_Simulink_Y.Velocity_0);
 
   /* Switch: '<S4>/Switch' incorporates:
-   *  Constant: '<S29>/Constant'
+   *  Constant: '<S31>/Constant'
    *  Constant: '<S4>/Constant'
    *  Inport: '<Root>/ODrive_0_Encoder_Estimate_age'
-   *  RelationalOperator: '<S29>/Compare'
+   *  RelationalOperator: '<S31>/Compare'
    */
   if (HCU_V2_Simulink_U.ODrive_0_Encoder_Estimate_age > 150U) {
     HCU_V2_Simulink_Y.Velocity_0 = 0.0F;
@@ -1252,12 +1344,14 @@ void HCU_V2_Simulink_step(void)
     &HCU_V2_Simulink_Y.Velocity_1);
 
   /* Switch: '<S4>/Switch1' incorporates:
-   *  Constant: '<S30>/Constant'
-   *  Constant: '<S4>/Constant1'
+   *  Constant: '<S32>/Constant'
    *  Inport: '<Root>/ODrive_1_Encoder_Estimate_age'
-   *  RelationalOperator: '<S30>/Compare'
+   *  RelationalOperator: '<S32>/Compare'
    */
   if (HCU_V2_Simulink_U.ODrive_1_Encoder_Estimate_age > 150U) {
+    /* Product: '<S46>/delta fall limit' incorporates:
+     *  Constant: '<S4>/Constant1'
+     */
     HCU_V2_Simulink_Y.Velocity_1 = 0.0F;
   }
 
@@ -1280,17 +1374,17 @@ void HCU_V2_Simulink_step(void)
     Switch2 *= fminf(1.0F, fabsf(HCU_V2_Simulink_Y.Velocity_0) / cutoff);
   }
 
-  if (rtb_Subtract < 0.0F) {
-    rtb_Subtract *= fminf(1.0F, fabsf(HCU_V2_Simulink_Y.Velocity_1) / cutoff);
+  if (rtb_Regen_Shape < 0.0F) {
+    rtb_Regen_Shape *= fminf(1.0F, fabsf(HCU_V2_Simulink_Y.Velocity_1) / cutoff);
   }
 
   Switch2 = fminf(fmaxf(Switch2, -HCU_V2_Simulink_U.Motor_Regen_Max),
                   HCU_V2_Simulink_U.Motor_Torque_Max);
-  rtb_Subtract = fminf(fmaxf(rtb_Subtract, -HCU_V2_Simulink_U.Motor_Regen_Max),
-                       HCU_V2_Simulink_U.Motor_Torque_Max);
+  rtb_Regen_Shape = fminf(fmaxf(rtb_Regen_Shape,
+    -HCU_V2_Simulink_U.Motor_Regen_Max), HCU_V2_Simulink_U.Motor_Torque_Max);
   HCU_V2_Simulink_Y.Power_Demand = 6.28318548F * fabsf
     (HCU_V2_Simulink_Y.Velocity_0) * Switch2 + 6.28318548F * fabsf
-    (HCU_V2_Simulink_Y.Velocity_1) * rtb_Subtract;
+    (HCU_V2_Simulink_Y.Velocity_1) * rtb_Regen_Shape;
   if (HCU_V2_Simulink_Y.Power_Demand >= 0.0F) {
     HCU_V2_Simulink_Y.Power_Budget = HCU_V2_Simulink_U.Drive_Efficiency *
       HCU_V2_Simulink_U.BMS_Margin * (real32_T)i *
@@ -1319,7 +1413,7 @@ void HCU_V2_Simulink_step(void)
    *  Product: '<S5>/Product1'
    */
   HCU_V2_Simulink_Y.Torque_Request_Right = HCU_V2_Simulink_Y.Torque_Scale_Factor
-    * rtb_Subtract * (real32_T)HCU_V2_Simulink_U.Right_Direction;
+    * rtb_Regen_Shape * (real32_T)HCU_V2_Simulink_U.Right_Direction;
 
   /* Outport: '<Root>/Torque_Request_Left' incorporates:
    *  Inport: '<Root>/Left_Direction'
@@ -1383,7 +1477,7 @@ void HCU_V2_Simulink_step(void)
                 4);
 
   /* Switch: '<S7>/Switch3' */
-  if (!rtb_Compare_h) {
+  if (!rtb_Compare_dm) {
     /* Outport: '<Root>/Bus_Current_1' incorporates:
      *  Constant: '<S7>/Constant1'
      */
@@ -1393,7 +1487,7 @@ void HCU_V2_Simulink_step(void)
   /* End of Switch: '<S7>/Switch3' */
 
   /* Switch: '<S7>/Switch1' */
-  if (!rtb_Compare_n) {
+  if (!rtb_Compare_h) {
     /* Outport: '<Root>/Bus_Current_0' incorporates:
      *  Constant: '<S7>/Constant'
      */
@@ -1439,14 +1533,14 @@ void HCU_V2_Simulink_step(void)
    */
   HCU_V2_Simulink_Y.User_LED_2 = HCU_V2_Simulink_U.bus2_ok;
 
-  /* Update for Delay: '<S44>/Delay' */
+  /* Update for Delay: '<S46>/Delay' */
   HCU_V2_Simulink_DW.icLoad = false;
 }
 
 /* Model initialize function */
 void HCU_V2_Simulink_initialize(void)
 {
-  /* InitializeConditions for Delay: '<S44>/Delay' */
+  /* InitializeConditions for Delay: '<S46>/Delay' */
   HCU_V2_Simulink_DW.icLoad = true;
 }
 

@@ -76,6 +76,41 @@
  * separately - it mirrors the SDC line directly in C and needs no outport.) */
 #define USER_LED_FEED_READY   0
 
+/* ---- GUI / console START button feed (Simulink-guarded) --------------------
+ * Feeds the Start_Button_GUI parameter into a boolean root Inport of the same
+ * name, to be OR'd in Simulink with the physical Start_Button. GUARDED exactly
+ * like the two blocks above: the MODEL_PARAM line references
+ * HCU_V2_Simulink_U.Start_Button_GUI, which DOES NOT EXIST in the model struct
+ * until you add that Inport and regenerate - so with this at 0 the firmware still
+ * links today (the parameter exists and the GUI/console can set it; it just isn't
+ * fed to the model yet). When you have:
+ *     1. added a boolean root Inport in Simulink named EXACTLY  Start_Button_GUI
+ *     2. OR'd it with the existing Start_Button inport
+ *     3. regenerated Embedded Coder to CM7\Model,
+ * flip this to 1 and the GUI START button reaches the model. */
+#define START_GUI_FEED_READY   1
+
+/* ---- Speed-gated launch inhibit: bench-bypass feed (Simulink-guarded) -------
+ * The Option-1 anti-rollaway logic lives in Simulink: it holds DRIVE torque at 0
+ * until the car is actually rolling, using road speed decoded from `vehicleSpeed`
+ * - which already arrives in the APPS frame at APPS[4..5], so NO new CAN message
+ * and NO extra CAN_FEED are needed (the road speed rides in for free at APPS rate,
+ * and APPS_age is already its freshness stamp). The only new plumbing is the
+ * Bench_Speed_Bypass parameter, which ORs that speed gate open so a jacked,
+ * wheels-off car can spin the motors from 0 km/h.
+ *
+ * GUARDED exactly like the blocks above: MODEL_PARAM(Bench_Speed_Bypass)
+ * references HCU_V2_Simulink_U.Bench_Speed_Bypass, which DOES NOT EXIST in the
+ * model struct until you add that boolean root Inport and regenerate - so with
+ * this at 0 the firmware still links today (the parameter exists and the
+ * console/GUI can set it; it just isn't fed to the model yet). When you have:
+ *     1. added a boolean root Inport named EXACTLY  Bench_Speed_Bypass
+ *     2. OR'd it into the speed-gate permit in Simulink (see the guide)
+ *     3. regenerated Embedded Coder to CM7\Model,
+ * flip this to 1. For a full jack test set BOTH Bench_Engine_Off (sync gate) and
+ * Bench_Speed_Bypass (speed gate) = 1. */
+#define SPEED_GATE_FEED_READY   1
+
 /* CAN_FEED: copy one demuxed CAN message into the model inbox in a single line.
  *
  *     CAN_FEED( bus1 , CAN1_TEST , test );
@@ -172,6 +207,20 @@ void Model_Step(void)
 	HCU_V2_Simulink_U.SDC_Monitor = (HAL_GPIO_ReadPin(SDC_Monitor_GPIO_Port, SDC_Monitor_Pin) == GPIO_PIN_SET);
 	HCU_V2_Simulink_U.Start_Button = (HAL_GPIO_ReadPin(User_Button_1_GPIO_Port, User_Button_1_Pin) == GPIO_PIN_SET);
 
+	/* GUI / console START request: the SAME "start", but from the laptop. It
+	 * arrives as a tunable (the GUI START button - and `set Start_Button_GUI 1` -
+	 * pulses it), so it is fed to its OWN boolean inport here; int32 0/1 narrows to
+	 * boolean implicitly, exactly like Bench_Engine_Off below. In Simulink you OR
+	 * this inport with Start_Button above, so the two start sources share the
+	 * identical ready-to-drive sequence and every interlock. It can REQUEST start;
+	 * it can never bypass a safety gate. (Kept here, next to the physical button,
+	 * rather than in the MODEL_PARAM group so the two start inputs sit together.)
+	 * Compiled out until the model has the matching inport - see
+	 * START_GUI_FEED_READY at the top of this file. */
+#if START_GUI_FEED_READY
+	MODEL_PARAM(Start_Button_GUI);
+#endif
+
 	/* ----- feed tunable parameters to the model (one line each) -----------
 	 * Add a parameter in params.def (it then appears on the console and GUI
 	 * automatically). To also let the MODEL use it, give it a matching Simulink
@@ -218,6 +267,21 @@ void Model_Step(void)
      * velocity setpoint for wheels-off spin tests (ODrive switched to
      * VELOCITY_CONTROL over USB). Default 0 = feature inert. See params.def. */
     MODEL_PARAM(Vel_Scale);
+
+    /* Bench engine-off drive-enable BYPASS -> model. Boolean; ORs the engine-sync
+     * gate open so the Safety_Supervisor can reach DRIVE with the engine off for a
+     * bench test. Bypasses ONLY that gate; every other interlock stays live.
+     * Default 0 = normal (real sync required). See params.def for the warning. */
+    MODEL_PARAM(Bench_Engine_Off);
+
+    /* Bench SPEED-gate BYPASS -> model. Boolean; ORs the Option-1 launch speed
+     * gate open so a jacked, wheels-off car can spin the motors from 0 km/h. The
+     * road-speed signal itself needs NO feed here - it already arrives in the APPS
+     * frame (APPS[4..5]) and is decoded in Simulink. Compiled out until the model
+     * has the matching inport - see SPEED_GATE_FEED_READY at the top of this file. */
+#if SPEED_GATE_FEED_READY
+    MODEL_PARAM(Bench_Speed_Bypass);
+#endif
 
     /* ---- 2. run one model step ------------------------------------------ */
     HCU_V2_Simulink_step();

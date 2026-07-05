@@ -55,6 +55,45 @@ BAUDS = ["9600", "19200", "38400", "57600", "115200"]  # cosmetic for a CDC port
 TELEM_RATES = ["1", "2", "5", "10", "20", "50", "100"]  # Hz choices
 DEFAULT_TELEM_RATE = "20"
 
+# ---------------------------------------------------------------------------
+# Visual theme  (cosmetics only - nothing here changes behaviour)
+# ---------------------------------------------------------------------------
+# A single dark "trackside" palette applied to every widget so the console
+# reads as one cohesive dashboard instead of default-grey tkinter. Tweak the
+# hex values freely to taste; no logic depends on them.
+UI = {
+    "page":      "#0d1117",   # window background / gutters between cards
+    "card":      "#161b22",   # panels, labelframes, tab bodies
+    "field":     "#0d1117",   # inset inputs, tree + console field
+    "elev":      "#1c232b",   # raised chips: buttons, headings, banners
+    "border":    "#30363d",   # hairline outlines / separators
+    "fg":        "#e6edf3",   # primary text
+    "muted":     "#8b98a5",   # secondary / hint text
+    "accent":    "#3b82f6",   # primary blue
+    "accent_hi": "#60a5fa",   # hover / highlighted values
+    "accent_ac": "#2563eb",   # pressed
+    "green":     "#22c55e",   # go / energised
+    "green_hi":  "#16a34a",
+    "green_ac":  "#15803d",   # pressed START
+    "amber":     "#f59e0b",   # transitional states / reconnecting
+    "red":       "#ef4444",
+    "red_hi":    "#f87171",   # disconnected text on dark
+    "purple":    "#8957e5",   # unknown supervisor state
+}
+
+FONT_UI    = ("Segoe UI", 10)
+FONT_UI_SM = ("Segoe UI", 9)
+FONT_UI_B  = ("Segoe UI", 10, "bold")
+FONT_MONO  = ("Consolas", 10)
+
+# The green START button pulses this boolean parameter high, then back to 0, so it
+# behaves like a momentary press of the physical PCB start button (and can never
+# stick "on"). In Simulink it is simply OR'd with the physical Start_Button inport,
+# so it runs the identical ready-to-drive sequence and every interlock still
+# applies. The name MUST match the params.def / Simulink Inport name.
+START_PARAM = "Start_Button_GUI"
+START_PULSE_MS = 400          # how long the "press" is held before it auto-releases
+
 # Where we remember the last port / baud / auto-reconnect choice between runs.
 SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "ConfigGUI.settings.json")
@@ -94,13 +133,13 @@ _SCHEMA_RE = re.compile(r'^([A-Za-z_]\w*)\s+([a-z0-9]+)\s+(\d+)\s*$')
 # number just shows as "STATE <n>" in purple, so nothing breaks.
 STATE_SIGNAL = "State_Enum"
 SUPERVISOR_STATES = {          # code: (display name, background, foreground)
-    0:  ("INIT / UNKNOWN", "#7f8c8d", "#ffffff"),   # grey  - chart not run yet
-    1:  ("HV OFF",         "#7f8c8d", "#ffffff"),   # grey  - shutdown / no HV
-    2:  ("STANDBY",        "#2980b9", "#ffffff"),   # blue  - HV up, idle, ready
-    3:  ("PRE-CHARGE",     "#d68910", "#ffffff"),   # amber - bus charging
-    4:  ("RELAY SWAP",     "#d68910", "#ffffff"),   # amber - AIR closing
-    5:  ("DRIVE",          "#27ae60", "#ffffff"),   # green - armed, motors live
-    6:  ("ERROR / FAULT",  "#c0392b", "#ffffff"),   # red   - latched fault
+    0:  ("INIT / UNKNOWN", "#39424e",       "#e6edf3"),  # slate - chart not run yet
+    1:  ("HV OFF",         "#39424e",       "#e6edf3"),  # slate - shutdown / no HV
+    2:  ("STANDBY",        UI["accent_ac"], "#ffffff"),  # blue  - HV up, idle, ready
+    3:  ("PRE-CHARGE",     UI["amber"],     "#1a1206"),  # amber - bus charging
+    4:  ("RELAY SWAP",     UI["amber"],     "#1a1206"),  # amber - AIR closing
+    5:  ("DRIVE",          UI["green_hi"],  "#ffffff"),  # green - armed, motors live
+    6:  ("ERROR / FAULT",  "#da3633",       "#ffffff"),  # red   - latched fault
 }
 
 # HV-actuator enable outputs shown as compact lamps beside the state name
@@ -141,18 +180,17 @@ class ConsoleApp:
         self._reconnect_after = None     # pending root.after id for reconnect
         self._user_disconnected = False  # True after an explicit Disconnect
 
-        root.title("HCU V2  --  Console")
-        root.minsize(820, 720)
-        try:
-            ttk.Style().theme_use("clam")
-        except tk.TclError:
-            pass
+        root.title("HCU V2  ·  Console")
+        root.minsize(900, 760)
+        self._apply_theme()
 
         self.auto_reconnect_var = tk.BooleanVar(value=True)
         self.telem_rate_var = tk.StringVar(value=DEFAULT_TELEM_RATE)
 
+        self._build_header()
         self._build_connection_bar()
         self._build_actions_bar()
+        self._build_drive_bar()
         self._build_state_banner()
         self._build_notebook()
         self._set_connected(False)
@@ -166,6 +204,157 @@ class ConsoleApp:
         # If we remembered a port and auto-reconnect is on, connect on startup.
         if self.auto_reconnect_var.get() and self._target_device:
             self.root.after(200, self._try_reconnect)
+
+    # ---------------- theme / chrome ----------------
+    def _apply_theme(self):
+        """One dark 'trackside' palette applied to every widget so the console
+        reads as a single dashboard. Pure cosmetics - no behaviour depends on
+        anything in here."""
+        root = self.root
+        st = ttk.Style()
+        try:
+            st.theme_use("clam")     # the only built-in theme we can fully recolour
+        except tk.TclError:
+            pass
+
+        page, card, field = UI["page"], UI["card"], UI["field"]
+        elev, border      = UI["elev"], UI["border"]
+        fg, muted, accent = UI["fg"], UI["muted"], UI["accent"]
+
+        root.configure(background=page)
+        self._enable_dark_titlebar()
+
+        st.configure(".", background=card, foreground=fg, fieldbackground=field,
+                     bordercolor=border, lightcolor=card, darkcolor=card,
+                     troughcolor=field, focuscolor=elev, font=FONT_UI)
+
+        # Frames: cards are 'card', the window itself + gutters are 'page'.
+        st.configure("TFrame", background=card)
+        st.configure("Page.TFrame", background=page)
+        st.configure("Header.TFrame", background=card)
+
+        # Labels.
+        st.configure("TLabel", background=card, foreground=fg, font=FONT_UI)
+        st.configure("Muted.TLabel", background=card, foreground=muted, font=FONT_UI_SM)
+        st.configure("H1.TLabel", background=card, foreground=fg,
+                     font=("Segoe UI", 16, "bold"))
+        st.configure("H1Accent.TLabel", background=card, foreground=accent,
+                     font=("Segoe UI", 16, "bold"))
+        st.configure("H2.TLabel", background=card, foreground=muted, font=FONT_UI_SM)
+
+        # Card panels.
+        st.configure("TLabelframe", background=card, bordercolor=border,
+                     relief="solid", borderwidth=1)
+        st.configure("TLabelframe.Label", background=card, foreground=accent,
+                     font=FONT_UI_B)
+
+        # Buttons: readable 'chip' by default, accent variant for primary actions.
+        st.configure("TButton", background="#21262d", foreground=fg,
+                     bordercolor=border, relief="solid", borderwidth=1,
+                     padding=(12, 6), font=FONT_UI, focuscolor="#21262d")
+        st.map("TButton",
+               background=[("disabled", card), ("pressed", UI["accent_ac"]),
+                           ("active", "#2b333d")],
+               foreground=[("disabled", muted)],
+               bordercolor=[("active", accent), ("focus", accent),
+                            ("disabled", border)])
+
+        st.configure("Accent.TButton", background=accent, foreground="#ffffff",
+                     bordercolor=accent, relief="solid", borderwidth=1,
+                     focuscolor=accent, font=FONT_UI_B)
+        st.map("Accent.TButton",
+               background=[("disabled", "#22303f"), ("pressed", UI["accent_ac"]),
+                           ("active", UI["accent_hi"])],
+               foreground=[("disabled", muted)],
+               bordercolor=[("disabled", "#22303f"), ("active", UI["accent_hi"])])
+
+        # Checkbutton.
+        st.configure("TCheckbutton", background=card, foreground=fg, focuscolor=card)
+        st.map("TCheckbutton",
+               background=[("active", card)],
+               foreground=[("disabled", muted)],
+               indicatorcolor=[("selected", accent), ("!selected", field)])
+
+        # Text entry.
+        st.configure("TEntry", fieldbackground=field, foreground=fg,
+                     bordercolor=border, insertcolor=fg, padding=5)
+        st.map("TEntry", bordercolor=[("focus", accent)],
+               fieldbackground=[("disabled", card)])
+
+        # Combobox (+ its popup listbox, which is a classic-tk widget).
+        st.configure("TCombobox", fieldbackground=field, background=elev,
+                     foreground=fg, arrowcolor=fg, bordercolor=border, padding=4)
+        st.map("TCombobox",
+               fieldbackground=[("readonly", field), ("disabled", card)],
+               foreground=[("disabled", muted)],
+               arrowcolor=[("disabled", muted)],
+               bordercolor=[("focus", accent), ("active", accent)])
+        root.option_add("*TCombobox*Listbox.background", card)
+        root.option_add("*TCombobox*Listbox.foreground", fg)
+        root.option_add("*TCombobox*Listbox.selectBackground", accent)
+        root.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
+        root.option_add("*TCombobox*Listbox.font", FONT_UI)
+
+        # Notebook: selected tab flows into the card body below it.
+        st.configure("TNotebook", background=page, bordercolor=border,
+                     tabmargins=(4, 6, 4, 0))
+        st.configure("TNotebook.Tab", background=page, foreground=muted,
+                     padding=(18, 9), font=FONT_UI_B, bordercolor=border)
+        st.map("TNotebook.Tab",
+               background=[("selected", card)],
+               foreground=[("selected", fg), ("active", fg)])
+
+        # Treeview (the live-telemetry grid).
+        st.configure("Treeview", background=field, fieldbackground=field,
+                     foreground=fg, bordercolor=border, borderwidth=0, rowheight=26)
+        st.configure("Treeview.Heading", background=elev, foreground=muted,
+                     relief="flat", font=FONT_UI_B, padding=(8, 7))
+        st.map("Treeview",
+               background=[("selected", "#1f6feb")],
+               foreground=[("selected", "#ffffff")])
+        st.map("Treeview.Heading", background=[("active", "#28303a")])
+
+        # Scrollbars + separators.
+        for orient in ("Vertical", "Horizontal"):
+            st.configure(f"{orient}.TScrollbar", background=elev, troughcolor=page,
+                         bordercolor=page, arrowcolor=muted, relief="flat")
+            st.map(f"{orient}.TScrollbar", background=[("active", border)])
+        st.configure("TSeparator", background=border)
+
+    def _enable_dark_titlebar(self):
+        """Ask Windows (DWM) to paint this window's title bar dark to match the
+        UI. Harmless no-op on non-Windows or older builds."""
+        try:
+            import ctypes
+            self.root.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            flag = ctypes.c_int(1)
+            for attr in (20, 19):   # DWMWA_USE_IMMERSIVE_DARK_MODE (new, then old)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attr, ctypes.byref(flag), ctypes.sizeof(flag))
+        except Exception:
+            pass
+
+    def _build_header(self):
+        """A slim title band so the tool opens with an identity instead of a bare
+        row of buttons. Cosmetic only."""
+        band = ttk.Frame(self.root, style="Header.TFrame")
+        band.pack(fill="x")
+        inner = ttk.Frame(band, style="Header.TFrame")
+        inner.pack(fill="x", padx=16, pady=(12, 10))
+
+        title = ttk.Frame(inner, style="Header.TFrame")
+        title.pack(side="left")
+        ttk.Label(title, text="◆ HCU", style="H1Accent.TLabel").pack(side="left")
+        ttk.Label(title, text=" V2", style="H1.TLabel").pack(side="left")
+        ttk.Label(title, text="   CONSOLE", style="H2.TLabel").pack(
+            side="left", pady=(7, 0))
+
+        ttk.Label(inner,
+                  text="Formula Student · Hybrid Control Unit · trackside console",
+                  style="H2.TLabel").pack(side="right", pady=(7, 0))
+
+        tk.Frame(self.root, height=2, background=UI["accent"]).pack(fill="x")
 
     # ---------------- UI construction ----------------
     def _build_connection_bar(self):
@@ -182,13 +371,15 @@ class ConsoleApp:
         self.baud_cb.set("115200")
         self.baud_cb.grid(row=0, column=4, padx=4)
 
-        self.connect_btn = ttk.Button(f, text="Connect", command=self.toggle_connection)
+        self.connect_btn = ttk.Button(f, text="Connect", style="Accent.TButton",
+                                       command=self.toggle_connection)
         self.connect_btn.grid(row=0, column=5, padx=6)
 
         ttk.Checkbutton(f, text="Auto-reconnect", variable=self.auto_reconnect_var,
                         command=self._save_settings).grid(row=0, column=6, padx=6)
 
-        self.status_lbl = ttk.Label(f, text="● disconnected", foreground="#c0392b")
+        self.status_lbl = ttk.Label(f, text="● disconnected",
+                                    font=FONT_UI_B, foreground=UI["red_hi"])
         self.status_lbl.grid(row=0, column=7, padx=8)
 
     def _build_actions_bar(self):
@@ -225,9 +416,40 @@ class ConsoleApp:
         self.gettime_btn = ttk.Button(bar, text="Show time", command=self.cmd_get_time)
         self.gettime_btn.pack(side="left", padx=6)
         self.clock_var = tk.StringVar(value="—")
-        ttk.Label(bar, text="Board clock:").pack(side="left", padx=(8, 2))
-        ttk.Label(bar, textvariable=self.clock_var, foreground="#1f6aa5",
-                  font=("Consolas", 10)).pack(side="left")
+        ttk.Label(bar, text="Board clock:", style="Muted.TLabel").pack(
+            side="left", padx=(8, 2))
+        ttk.Label(bar, textvariable=self.clock_var, foreground=UI["accent_hi"],
+                  background=UI["card"], font=FONT_MONO).pack(side="left")
+
+    # ---- Drive control (the big START button) ----
+    def _build_drive_bar(self):
+        """A big, obvious START button that mirrors the physical PCB start button.
+        Clicking it PULSES the Start_Button_GUI parameter (1, then back to 0 a
+        moment later) so the board sees a momentary press. In Simulink that param
+        is OR'd with the physical Start_Button, so it drives the identical
+        ready-to-drive sequence and every interlock (HV / precharge / APPS /
+        engine-sync / AIR fail-safe) still applies - it can request start, never
+        bypass a safety gate."""
+        f = ttk.LabelFrame(self.root, text="Drive")
+        f.pack(fill="x", padx=8, pady=4)
+
+        bar = ttk.Frame(f)
+        bar.pack(fill="x", padx=4, pady=6)
+
+        # tk.Button (not ttk) so we can colour it like a real start button.
+        self.start_btn = tk.Button(
+            bar, text="▶  START", command=self.cmd_start,
+            background=UI["green"], foreground="#ffffff",
+            activebackground=UI["green_ac"], activeforeground="#ffffff",
+            disabledforeground="#5b6673", font=("Segoe UI", 13, "bold"),
+            padx=28, pady=10, relief="flat", bd=0, cursor="hand2",
+            highlightthickness=0)
+        self.start_btn.pack(side="left")
+
+        ttk.Label(bar, style="Muted.TLabel",
+                  text="  Mirrors the PCB start button (momentary press). All HV / "
+                       "precharge / APPS / engine-sync interlocks still apply."
+                  ).pack(side="left", padx=8)
 
     # ---- Controller-state banner (always visible, above the tabs) ----
     def _build_state_banner(self):
@@ -244,8 +466,8 @@ class ConsoleApp:
 
         self.state_lbl = tk.Label(inner, text="—  waiting for stream",
                                   anchor="center", font=("Segoe UI", 18, "bold"),
-                                  background="#2c3e50", foreground="#ecf0f1",
-                                  padx=12, pady=10)
+                                  background=UI["elev"], foreground=UI["muted"],
+                                  padx=12, pady=12)
         self.state_lbl.pack(side="left", fill="x", expand=True)
 
         # One green/grey lamp per HV-actuator enable, right of the state name.
@@ -253,8 +475,8 @@ class ConsoleApp:
         for sig, label in HV_ENABLE_LAMPS:
             lamp = tk.Label(inner, text=f"{label} —", width=11, anchor="center",
                             font=("Segoe UI", 10, "bold"),
-                            background="#7f8c8d", foreground="#ffffff",
-                            padx=6, pady=10)
+                            background="#39424e", foreground="#ffffff",
+                            padx=6, pady=12)
             lamp.pack(side="left", padx=(8, 0))
             self.enable_lamps[sig] = (lamp, label)
 
@@ -264,7 +486,7 @@ class ConsoleApp:
         except (TypeError, ValueError):
             return
         name, bg, fg = SUPERVISOR_STATES.get(
-            code, (f"STATE {code}", "#8e44ad", "#ffffff"))
+            code, (f"STATE {code}", UI["purple"], "#ffffff"))
         self.state_lbl.config(text=f"SUPERVISOR:  {name}", background=bg, foreground=fg)
 
     def _update_enable_lamp(self, sig, raw_value):
@@ -274,15 +496,15 @@ class ConsoleApp:
         except (TypeError, ValueError):
             return
         if on:
-            lamp.config(text=f"{label} ON", background="#27ae60")   # green - energised
+            lamp.config(text=f"{label} ON", background=UI["green_hi"])  # energised
         else:
-            lamp.config(text=f"{label} off", background="#7f8c8d")  # grey  - open
+            lamp.config(text=f"{label} off", background="#39424e")      # open
 
     def _reset_state_banner(self):
         self.state_lbl.config(text="—  waiting for stream",
-                              background="#2c3e50", foreground="#ecf0f1")
+                              background=UI["elev"], foreground=UI["muted"])
         for lamp, label in self.enable_lamps.values():
-            lamp.config(text=f"{label} —", background="#7f8c8d")
+            lamp.config(text=f"{label} —", background="#39424e")
 
     def _build_notebook(self):
         nb = ttk.Notebook(self.root)
@@ -306,7 +528,7 @@ class ConsoleApp:
         f.pack(fill="both", expand=True, padx=8, pady=6)
 
         # Scrollable area so the panel copes with any number of parameters.
-        canvas = tk.Canvas(f, highlightthickness=0)
+        canvas = tk.Canvas(f, highlightthickness=0, background=UI["card"])
         vsb = ttk.Scrollbar(f, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=vsb.set)
         vsb.pack(side="right", fill="y")
@@ -325,11 +547,12 @@ class ConsoleApp:
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
         for c, h in enumerate(["Parameter", "Current", "New value", "", ""]):
-            ttk.Label(self.var_grid, text=h, font=("TkDefaultFont", 9, "bold")).grid(
-                row=0, column=c, padx=4, pady=2, sticky="w")
+            ttk.Label(self.var_grid, text=h, foreground=UI["muted"],
+                      font=FONT_UI_B).grid(
+                row=0, column=c, padx=4, pady=(2, 6), sticky="w")
 
         self.empty_lbl = ttk.Label(
-            self.var_grid, foreground="#888888",
+            self.var_grid, style="Muted.TLabel",
             text="(connect, then press 'Refresh all (list)' to discover parameters)")
         self.empty_lbl.grid(row=1, column=0, columnspan=5, padx=4, pady=6, sticky="w")
 
@@ -342,7 +565,8 @@ class ConsoleApp:
         ctl = ttk.Frame(parent)
         ctl.pack(fill="x", padx=8, pady=(8, 2))
 
-        self.telem_btn = ttk.Button(ctl, text="▶ Start stream", command=self.toggle_telem)
+        self.telem_btn = ttk.Button(ctl, text="▶ Start stream", style="Accent.TButton",
+                                    command=self.toggle_telem)
         self.telem_btn.pack(side="left")
 
         ttk.Label(ctl, text="Rate:").pack(side="left", padx=(10, 2))
@@ -365,8 +589,8 @@ class ConsoleApp:
         ttk.Button(ctl, text="✕", width=2,
                    command=lambda: self.filter_var.set("")).pack(side="left", padx=(2, 0))
 
-        self.telem_status = ttk.Label(ctl, text="idle", foreground="#888888",
-                                      font=("Consolas", 9))
+        self.telem_status = ttk.Label(ctl, text="idle", foreground=UI["muted"],
+                                      background=UI["card"], font=FONT_MONO)
         self.telem_status.pack(side="right")
 
         # The live grid: every streamed signal, value updating in place.
@@ -382,8 +606,8 @@ class ConsoleApp:
         self.tree.column("#0", width=260, anchor="w", stretch=False)
         self.tree.column("value", width=360, anchor="w")
         self.tree.column("type", width=70, anchor="center", stretch=False)
-        self.tree.tag_configure("changed", foreground="#1f6aa5")
-        self.tree.tag_configure("stale", foreground="#444444")
+        self.tree.tag_configure("changed", foreground=UI["accent_hi"])
+        self.tree.tag_configure("stale", foreground=UI["muted"])
 
         tvsb = ttk.Scrollbar(body, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=tvsb.set)
@@ -391,7 +615,7 @@ class ConsoleApp:
         self.tree.pack(side="left", fill="both", expand=True, padx=4, pady=4)
 
         self.telem_empty = ttk.Label(
-            parent, foreground="#888888",
+            parent, style="Muted.TLabel",
             text="(connect; signals auto-discover. Press ▶ Start stream to watch values update.)")
         # shown/removed dynamically
         self._telem_empty_shown = False
@@ -411,13 +635,17 @@ class ConsoleApp:
         f.pack(fill="both", expand=True, padx=8, pady=6)
 
         self.log = scrolledtext.ScrolledText(f, height=12, wrap="word",
-                                             font=("Consolas", 10), state="disabled",
-                                             background="#1e1e1e", foreground="#d4d4d4",
-                                             insertbackground="#d4d4d4")
+                                             font=FONT_MONO, state="disabled",
+                                             background="#0b0e13", foreground=UI["fg"],
+                                             insertbackground=UI["fg"],
+                                             selectbackground=UI["accent"],
+                                             selectforeground="#ffffff",
+                                             relief="flat", borderwidth=0,
+                                             padx=8, pady=6)
         self.log.pack(fill="both", expand=True, padx=4, pady=4)
-        self.log.tag_config("tx", foreground="#4fc1ff")
-        self.log.tag_config("rx", foreground="#d4d4d4")
-        self.log.tag_config("sys", foreground="#888888")
+        self.log.tag_config("tx", foreground=UI["accent_hi"])
+        self.log.tag_config("rx", foreground=UI["fg"])
+        self.log.tag_config("sys", foreground=UI["muted"])
 
         row = ttk.Frame(f)
         row.pack(fill="x", padx=4, pady=(0, 4))
@@ -536,7 +764,7 @@ class ConsoleApp:
             return
         if not (self.auto_reconnect_var.get() and self._target_device):
             return
-        self.status_lbl.config(text="● reconnecting…", foreground="#d68910")
+        self.status_lbl.config(text="● reconnecting…", foreground=UI["amber"])
         self._reconnect_after = self.root.after(RECONNECT_MS, self._try_reconnect)
 
     def _cancel_reconnect(self):
@@ -637,6 +865,24 @@ class ConsoleApp:
     def cmd_set_time_now(self):
         now = datetime.datetime.now()
         self._send(now.strftime("time set %Y-%m-%d %H:%M:%S"))
+
+    # ---- start button ----
+    def cmd_start(self):
+        """Pulse the GUI start request: drive it high, then auto-release to 0 a
+        moment later so it behaves like a momentary press of the physical start
+        button and can never stick 'on'."""
+        if not (self.ser and self.ser.is_open):
+            messagebox.showwarning("Not connected", "Connect to the board first.")
+            return
+        self._send(f"set {START_PARAM} 1")
+        self.start_btn.config(background=UI["green_ac"])          # pressed look
+        self.root.after(START_PULSE_MS, self._start_release)
+
+    def _start_release(self):
+        self._send(f"set {START_PARAM} 0")
+        # Only restore the resting colour if the button is still enabled (connected).
+        if str(self.start_btn["state"]) != "disabled":
+            self.start_btn.config(background=UI["green"])
 
     # ---- telemetry commands ----
     def fetch_telem_schema(self):
@@ -803,12 +1049,12 @@ class ConsoleApp:
         if self._telem_streaming:
             self.telem_status.config(
                 text=f"streaming · {self._telem_hz} fps · {len(self._telem_order)} signals",
-                foreground="#27ae60")
+                foreground=UI["green"])
         elif self._telem_order:
             self.telem_status.config(
-                text=f"stopped · {len(self._telem_order)} signals", foreground="#888888")
+                text=f"stopped · {len(self._telem_order)} signals", foreground=UI["muted"])
         else:
-            self.telem_status.config(text="idle", foreground="#888888")
+            self.telem_status.config(text="idle", foreground=UI["muted"])
         # Fade rows back to neutral so only just-changed values stay highlighted.
         for name in self._telem_order:
             if self.tree.set(name, "value") != "—":
@@ -858,7 +1104,7 @@ class ConsoleApp:
 
         cur = tk.StringVar(value="—")
         cur_lbl = ttk.Label(self.var_grid, textvariable=cur, width=12, anchor="w",
-                            foreground="#1f6aa5")
+                            foreground=UI["accent_hi"], font=FONT_MONO)
         cur_lbl.grid(row=row, column=1, padx=4, sticky="w")
 
         ev = tk.StringVar()
@@ -885,9 +1131,10 @@ class ConsoleApp:
         self.connect_btn.config(text="Disconnect" if on else "Connect")
         self.status_lbl.config(
             text="● connected" if on else "● disconnected",
-            foreground="#27ae60" if on else "#c0392b")
+            foreground=UI["green"] if on else UI["red_hi"])
         state = "normal" if on else "disabled"
-        for b in (self.refresh_all_btn, self.ping_btn, self.stats_btn,
+        for b in (self.start_btn,
+                  self.refresh_all_btn, self.ping_btn, self.stats_btn,
                   self.clearstats_btn, self.save_btn, self.defaults_btn,
                   self.settime_btn, self.gettime_btn,
                   self.telem_btn, self.telem_refresh_btn):
