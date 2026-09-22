@@ -15,138 +15,64 @@
 #include "logger.h"            /* Log_Write() - drop one record into the CM4 SD-log ring */
 #include "air_safety.h"        /* AirSafety_SetRequest() - independent AIR fail-safe (it owns the sink pins) */
 
+/* ===========================================================================
+ *  FEATURE GUARDS  (*_FEED_READY)
+ * ---------------------------------------------------------------------------
+ *  Embedded Coder PRUNES an unconnected root inport, so C that references a
+ *  model port before the model has it fails the CM7 build at LINK. Each flag
+ *  below is 0 while the model lacks its ports and 1 once they exist and are
+ *  wired. Set one back to 0 if you ever revert the model past that feature.
+ *
+ *  Flag                     Requires these Simulink root ports
+ *  -----------------------  ---------------------------------------------------
+ *  TORQUE_SLEW_FEED_READY   in : Torque_Rate_Up, Torque_Rate_Down    (single)
+ *  START_GUI_FEED_READY     in : Start_Button_GUI                   (boolean)
+ *  SPEED_GATE_FEED_READY    in : Bench_Speed_Bypass                 (boolean)
+ *  RESET_FEED_READY         in : Reset_Req                          (boolean)
+ *  VEL_MODE_FEED_READY      in : Bench_Velocity_Mode                (boolean)
+ *                           out: Set_Controller_Mode_0/_1  (uint8, width 8),
+ *                                Set_Controller_Mode_0_req/_1_req   (boolean),
+ *                                Velocity_Mode_Active               (boolean)
+ *  USER_LED_FEED_READY      out: User_LED_3, User_LED_4             (boolean)
+ *
+ *  TRAP: leaving a flag at 0 while the ports DO exist is not harmless. The
+ *  inports then read 0 - and for the torque slew a rate of 0 clamps every delta
+ *  to zero, FREEZING torque at 0. Fail-safe, but the car makes no torque and
+ *  nothing tells you why.
+ *
+ *  What each feature actually does, and why, is in docs/CONTROL_STRATEGY.md:
+ *    slew  = section 7    start/reset = section 9    speed gate = section 6
+ *    velocity mode = section 8
+ * =========================================================================== */
+#define TORQUE_SLEW_FEED_READY   1
+#define START_GUI_FEED_READY     1
+#define SPEED_GATE_FEED_READY    1
+#define RESET_FEED_READY         1
+#define VEL_MODE_FEED_READY      1
+#define USER_LED_FEED_READY      0   /* User_LED_3/4 (PD10/PD11): outports not
+                                      * added to the model yet, so the two LEDs
+                                      * stay at their boot state (off). Their
+                                      * MEANING is yours to define in Simulink. */
+
 /* ---- Gearbox-protection torque slew rate (HARDCODED safety limit) ----------
- * Protects the Neu 2530 / 5:1 planetary from shock-loading: a pedal stab or a
- * throttle<->brake (drive<->regen) reversal is otherwise a torque STEP that
- * slams the gear teeth across the backlash. We slew-limit the model's base
- * torque demand SYMMETRICALLY so every change - including the reversal through
- * zero - is ramped, cushioning the lash reload. (A regen car cannot use the
- * "limit the rise, let the fall be instant" trick: with regen the fall is a
- * real driver command and the reversal is the worst gear event, so BOTH
- * directions must be slewed.)
+ * Protects the Neu 2530 / 5:1 planetary from shock-loading. The slew is
+ * SYMMETRIC (both rise and fall) because with regen the fall is a real driver
+ * command and the drive<->regen reversal through zero is the worst gear event.
  *
- * WHY IT LIVES HERE, NOT IN params.def: a gear-protection limit is safety-
- * critical, so (per the params.def rule) it must not be runtime-tunable - no
- * console `set` or edited flash image may move it. It is a firmware const.
+ * A ramp TIME is the fixed invariant, not a raw Nm/s: the rate is derived from
+ * the live Motor_Torque_Max cap, so it stays gentle whatever the cap is set to
+ * and can never accidentally become aggressive. 0.20 s to full torque = 22 Nm/s
+ * at the current 4.4 Nm cap (x5 at the gearbox output); a full reversal spans
+ * about twice that, so ~0.40 s.
  *
- * WHY A RAMP TIME, NOT A RAW Nm/s: the physically safe, transferable quantity
- * is the 0->full-torque ramp TIME. We fix that and let the Nm/s rate follow
- * Motor_Torque_Max, so the ramp stays gentle whatever the cap is set to and can
- * never accidentally become aggressive. 0.20 s to full torque is a soft start
- * for the geartrain yet still responsive; a full drive<->regen reversal (about
- * twice the span) therefore takes ~0.40 s. At the current 4.4 Nm cap that is a
- * 22 Nm/s slew (0.22 Nm per 10 ms tick); x5 at the gearbox output.
- *
- * The rate is fed (in Model_Step) to a symmetric Rate Limiter Dynamic in the
- * Base_Torque_Calculator, spliced BEFORE the Inverter_Enable gate so a fault
- * still zeroes torque INSTANTLY (that gate and the power-limiter scale->0 are
- * downstream multiplies, not affected by the limiter's internal ramp state).
+ * It lives HERE, not in params.def, because a gear-protection limit is
+ * safety-critical: no console `set` and no edited flash image may move it.
+ * Fed to a Rate Limiter Dynamic placed BEFORE the Inverter_Enable gate, so a
+ * fault still zeroes torque INSTANTLY regardless of the limiter's ramp state.
+ * Full rationale: docs/CONTROL_STRATEGY.md section 7.
  */
 #define TORQUE_FULL_RAMP_S   0.20f                        /* 0 -> full torque, seconds */
 #define TORQUE_SLEW_PER_S    (1.0f / TORQUE_FULL_RAMP_S)  /* rate = this * Motor_Torque_Max [Nm/s] */
-
-/* ARMED. The Simulink side exists and is verified against this build: root
- * inports Torque_Rate_Up / Torque_Rate_Down (single) + a symmetric Rate Limiter
- * Dynamic (<S44>) on the shaped torque, before the Inverter_Enable gate. At 1
- * the bridge feeds the slew rates every step.
- *   - If you ever revert the model to a version WITHOUT those inports, set this
- *     back to 0 or CM7 won't link.
- *   - Do NOT leave the inports in the model with this at 0: the rates would
- *     default to 0, the limiter would clamp every delta to 0 and FREEZE torque
- *     at 0 - fail-safe (no runaway) but the car makes no torque at all. */
-#define TORQUE_SLEW_FEED_READY   1
-
-/* ---- User status LEDs 3 & 4 (Simulink-driven) ------------------------------
- * User_LED_1/2 are already driven from model outports in the dispatch below.
- * User_LED_3 (PD10) and User_LED_4 (PD11) are two more free status LEDs whose
- * MEANING is yours to define in Simulink - lamp them off anything you like
- * (arm state, fault, TV active, ...). They are set-and-forget in C: the model
- * output is logical (TRUE = "LED on") and the active-low wiring is handled here.
- *
- * GUARDED exactly like the torque slew above: CM7 references
- * HCU_V2_Simulink_Y.User_LED_3 / User_LED_4, which DO NOT EXIST in the model
- * struct until you add the matching root Outports and regenerate - so with this
- * at 0 the two LEDs are simply held at their boot state (off) and the firmware
- * still links today. When you have:
- *     1. added two Boolean root Outports in Simulink named EXACTLY
- *            User_LED_3      (boolean)
- *            User_LED_4      (boolean)
- *     2. regenerated Embedded Coder to CM7\Model,
- * flip this to 1 and the model drives them. (SDC_Monitor_LED is handled
- * separately - it mirrors the SDC line directly in C and needs no outport.) */
-#define USER_LED_FEED_READY   0
-
-/* ---- GUI / console START button feed (Simulink-guarded) --------------------
- * Feeds the Start_Button_GUI parameter into a boolean root Inport of the same
- * name, to be OR'd in Simulink with the physical Start_Button. GUARDED exactly
- * like the two blocks above: the MODEL_PARAM line references
- * HCU_V2_Simulink_U.Start_Button_GUI, which DOES NOT EXIST in the model struct
- * until you add that Inport and regenerate - so with this at 0 the firmware still
- * links today (the parameter exists and the GUI/console can set it; it just isn't
- * fed to the model yet). When you have:
- *     1. added a boolean root Inport in Simulink named EXACTLY  Start_Button_GUI
- *     2. OR'd it with the existing Start_Button inport
- *     3. regenerated Embedded Coder to CM7\Model,
- * flip this to 1 and the GUI START button reaches the model. */
-#define START_GUI_FEED_READY   1
-
-/* ---- Speed-gated launch inhibit: bench-bypass feed (Simulink-guarded) -------
- * The Option-1 anti-rollaway logic lives in Simulink: it holds DRIVE torque at 0
- * until the car is actually rolling, using road speed decoded from `vehicleSpeed`
- * - which already arrives in the APPS frame at APPS[4..5], so NO new CAN message
- * and NO extra CAN_FEED are needed (the road speed rides in for free at APPS rate,
- * and APPS_age is already its freshness stamp). The only new plumbing is the
- * Bench_Speed_Bypass parameter, which ORs that speed gate open so a jacked,
- * wheels-off car can spin the motors from 0 km/h.
- *
- * GUARDED exactly like the blocks above: MODEL_PARAM(Bench_Speed_Bypass)
- * references HCU_V2_Simulink_U.Bench_Speed_Bypass, which DOES NOT EXIST in the
- * model struct until you add that boolean root Inport and regenerate - so with
- * this at 0 the firmware still links today (the parameter exists and the
- * console/GUI can set it; it just isn't fed to the model yet). When you have:
- *     1. added a boolean root Inport named EXACTLY  Bench_Speed_Bypass
- *     2. OR'd it into the speed-gate permit in Simulink (see the guide)
- *     3. regenerated Embedded Coder to CM7\Model,
- * flip this to 1. For a full jack test set BOTH Bench_Engine_Off (sync gate) and
- * Bench_Speed_Bypass (speed gate) = 1. */
-#define SPEED_GATE_FEED_READY   1
-
-/* ---- Bench velocity CONTROL-MODE switch over CAN (Simulink-guarded) ---------
- * Switches the ODrives between TORQUE_CONTROL (race) and VELOCITY_CONTROL (a
- * jacked, wheels-off spin test) over CAN - no USB / odrivetool per inverter. The
- * model owns it: the Bench_Velocity_Mode param feeds a boolean root Inport; the
- * model emits the ODrive Set_Controller_Mode payload (Set_Controller_Mode_0/1 +
- * _req, asserted ONLY while that axis is IDLE, so control_mode is never rewritten
- * on a live axis) plus a Velocity_Mode_Active flag that selects which setpoint
- * frame C streams. This references those model ports, which DO NOT EXIST until you
- * add them and regenerate - with this at 0 the firmware still links and streams
- * TORQUE only (the race-safe default). When you have:
- *     1. added the boolean root Inport  Bench_Velocity_Mode
- *     2. added the root Outports  Set_Controller_Mode_0 / _1 (uint8, width 8),
- *        Set_Controller_Mode_0_req / _1_req (boolean), Velocity_Mode_Active (bool)
- *     3. regenerated Embedded Coder to CM7\Model,
- * flip this to 1. ALSO set each ODrive's SAVED control_mode = TORQUE_CONTROL so a
- * power-cycle always reverts to the race-safe mode. */
-#define VEL_MODE_FEED_READY   1
-
-/* ---- Fault-acknowledge / Error-state exit feed (Simulink-guarded) -----------
- * The Safety_Supervisor's Error_State is a LATCH - once a confirmed fault puts the
- * chart there, it stays until a deliberate reset, so you don't have to power-cycle
- * the car to clear a fault. The model exposes a single boolean root Inport `Reset_Req`,
- * gated in the chart by `Reset_Req && !BMS_Fault`: it ACKNOWLEDGES a fault that has
- * already cleared and drops the chart to HV_OFF (never straight to DRIVE - the full
- * brake+start re-sequence still runs), and it can never suppress a still-active fault.
- *
- * We OR two request sources into that one inport below: the physical reset button
- * (User Button 2, PD13) and the GUI Clear-Fault button (the Error_Reset_GUI param).
- * GUARDED exactly like the blocks above: the feed references
- * HCU_V2_Simulink_U.Reset_Req, which only exists once the model has that inport - set
- * this back to 0 if you ever revert the model and CM7 will still link.
- *
- * NOTE: this only clears the MODEL's Error latch. A controller FREEZE is latched
- * separately by the independent AIR fail-safe (air_safety.c) and is cleared by
- * `safety reset`; the GUI Clear-Fault button issues both so one press covers either. */
-#define RESET_FEED_READY   1
 
 /* CAN_FEED: copy one demuxed CAN message into the model inbox in a single line.
  *

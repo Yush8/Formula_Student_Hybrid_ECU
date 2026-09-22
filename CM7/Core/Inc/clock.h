@@ -13,7 +13,7 @@
  *
  * Filenames on the card use a sequence counter (LOGxxxx.BIN), so logging is
  * robust even before the clock is set; the datetime is for the file header /
- * FAT timestamps only. See HANDOFF s16.2 and Shared/hcu_ipc.h.
+ * FAT timestamps only. See docs/ARCHITECTURE.md section 9 and Shared/hcu_ipc.h.
  */
 #ifndef CLOCK_H
 #define CLOCK_H

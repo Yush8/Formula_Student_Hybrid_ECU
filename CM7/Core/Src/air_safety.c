@@ -13,7 +13,7 @@
  *   - Gate: AIRs may close only when armed AND the model is alive AND not
  *     freeze-latched. It only ever subtracts authority from the model's request.
  *   - It does NOT touch the SDC: a real shutdown opens the AIR coils in hardware,
- *     and the model reads SDC_Monitor itself for intent (see HANDOFF §18).
+ *     and the model reads SDC_Monitor itself for intent (docs/ARCHITECTURE.md section 5).
  */
 
 #include "air_safety.h"
@@ -30,7 +30,7 @@
 /* How long the model step may be missing before we declare a freeze and LATCH the
  * AIRs open. 500 ms is chosen to MINIMISE NUISANCE: it is comfortably longer than
  * any legitimate cooperative stall (a big no-host console dump can block the
- * superloop for a few hundred ms - see HANDOFF §17.4), yet still safe - a frozen
+ * superloop for a few hundred ms - docs/ARCHITECTURE.md section 7), yet still safe - a frozen
  * model stops the ODrive torque setpoint stream, and the ODrive rx-watchdog already
  * disarms the axes (zero torque) within ~100 ms, so propulsion is gone long before
  * this fires. This latch is the final TS-isolation backstop, not the torque cut.

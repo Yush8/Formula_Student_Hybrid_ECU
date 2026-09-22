@@ -14,9 +14,10 @@
  * the model, and Can_Send() in its dispatch phase to transmit a packed frame.
  * No decode / scale / logic here - C is the postman, Simulink is the brain.
  *
- * Buses (classic CAN, 8-byte, 500 kbps, FDCAN kernel clock = HSE 25 MHz):
- *   FDCAN1 = dash / ECU bus
- *   FDCAN2 = tractive system / inverters bus
+ * Buses (classic CAN, 8-byte payload, FDCAN kernel clock = HSE 25 MHz). The two
+ * buses run at DIFFERENT bit rates - set in the .ioc, not here:
+ *   FDCAN1 = dash / ECU bus            -> 1 Mbit/s
+ *   FDCAN2 = tractive system/inverters -> 500 kbit/s
  *
  * =====================================================================
  *  HOW TO ADD A RECEIVED CAN MESSAGE  (you do NOT need to touch this file)

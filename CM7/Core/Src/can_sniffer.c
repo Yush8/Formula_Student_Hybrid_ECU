@@ -250,7 +250,7 @@ void CanSniffer_PrintTable(void)
 
 void CanSniffer_PrintStatus(void)
 {
-    char buf[128];
+    static char buf[128];      /* static: USB TX reads it after Console_Out returns */
     snprintf(buf, sizeof buf,
              "cansniff %s  rate %lu Hz  bus1 %u/%u ids (%lu frm, %lu drop)  "
              "bus2 %u/%u ids (%lu frm, %lu drop)\r\n",

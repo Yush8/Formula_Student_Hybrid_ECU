@@ -5,7 +5,7 @@
  *      Author: Yusha
  *
  * The CM7 control loop NEVER touches the SD card: a card stall (tens to ~250 ms
- * on cheap cards) would blow the hard 100 Hz tick budget (see HANDOFF s16.1).
+ * on cheap cards) would blow the hard 100 Hz tick budget (docs/ARCHITECTURE.md section 9).
  * Instead the loop drops fixed-size records into a lock-free ring in shared D3
  * SRAM4, and CM4 drains the ring to the card on its own time. This module is
  * the producer half:

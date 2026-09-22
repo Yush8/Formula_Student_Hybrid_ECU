@@ -183,7 +183,7 @@ SECTIONS
    * neither loads nor zeroes it, so the producer (Log_Init) owns its setup and
    * a CM4 reset can't wipe what CM7 placed. Hand-managed - CubeMX does not
    * generate cross-core sections. MUST mirror CM4's linker script. See
-   * Shared/hcu_ipc.h and HANDOFF section 16. */
+   * Shared/hcu_ipc.h and docs/ARCHITECTURE.md section 9. */
   .shared_ram (NOLOAD) :
   {
     . = ALIGN(4);

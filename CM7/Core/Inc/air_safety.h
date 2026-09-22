@@ -4,7 +4,7 @@
  *  Created on: 1 Jul 2026
  *      Author: Yusha
  *
- * INDEPENDENT CONTROLLER-FREEZE FAIL-SAFE  (HANDOFF.md roadmap item 2).
+ * INDEPENDENT CONTROLLER-FREEZE FAIL-SAFE  (docs/ARCHITECTURE.md section 5).
  *
  * This module does ONE thing that nothing else in the system can do: it stops a
  * FROZEN or CRASHED controller from holding the tractive system live. If the
@@ -13,7 +13,7 @@
  * own death. So an independent watchdog OUTSIDE the model forces the AIRs (and
  * pre-charge) open when the 100 Hz model step stops advancing.
  *
- * SCOPE - what this is NOT (deliberately trimmed, see HANDOFF §18):
+ * SCOPE - what this is NOT (deliberately trimmed - docs/ARCHITECTURE.md section 5):
  *   - It does NOT read or act on the SDC / shutdown circuit. A real SDC open
  *     de-energises the AIR coils DIRECTLY in hardware (rules-mandated); the model
  *     reads SDC_Monitor itself for shutdown intent (zero torque, open AIR, re-run

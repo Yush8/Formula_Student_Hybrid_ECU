@@ -189,12 +189,17 @@ while((__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) == RESET) && (timeout-- > 0));
   Log_Init();        /* set up the CM4 SD-log ring before the first Model_Step writes to it */
   Clock_Init();      /* seed RTC from build time + publish datetime to the IPC (after Log_Init) */
   Telem_Init();      /* live USB telemetry stream (off until `telem on`) */
-  AirSafety_Init();  /* independent AIR fail-safe: force sinks open + bias SDC pin (before Sched_Init - the TIM6 ISR drives it) */
+  AirSafety_Init();  /* independent AIR fail-safe: force both sinks open, clear the latch (MUST precede Sched_Init - the TIM6 ISR drives it) */
   Sched_Init();      /* start the 100 Hz model-step time base (TIM6) - must be last */
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  /* MCU_Active (PE7): asserted once init has completed and we are entering the
+   * superloop. ACTIVE-LOW - MX_GPIO_Init leaves it HIGH (inactive) through boot,
+   * and driving it LOW here says "the HCU is up". It is NOT currently
+   * de-asserted on a fault; wiring it as a second hardware AIR-enable gate is an
+   * open item (docs/STATUS.md section 4). */
   HAL_GPIO_WritePin(MCU_Active_GPIO_Port, MCU_Active_Pin, GPIO_PIN_RESET);
   while (1)
   {

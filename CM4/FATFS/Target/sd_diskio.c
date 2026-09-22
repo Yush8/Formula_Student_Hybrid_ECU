@@ -52,7 +52,7 @@
  * FatFs. Defining this stops SD_initialize() from calling BSP_SD_Init(), so the
  * SD hardware is brought up in EXACTLY ONE place. This removes the old double
  * init (MX_SDMMC2_SD_Init + f_mount->BSP_SD_Init) that left the HAL handle dirty
- * and wedged later mounts at FR_NOT_READY. See HANDOFF s16.6 / sd_logger.c. */
+ * and wedged later mounts at FR_NOT_READY. See docs/TRAPS.md section 4 / sd_logger.c. */
 #define DISABLE_SD_INIT
 /* USER CODE END disableSDInit */
 

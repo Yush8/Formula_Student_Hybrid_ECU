@@ -9,9 +9,9 @@
  * talk through one struct, g_hcu_ipc, placed at a FIXED physical address in D3
  * SRAM4 which BOTH cores see at the same address 0x38000000 (unlike D2 SRAM,
  * which is aliased to a different address on each core - a trap for shared
- * memory). Same anti-desync idea as the CAN .def X-macros (see HANDOFF s13):
+ * memory). Same anti-desync idea as the CAN .def X-macros (docs/ARCHITECTURE.md section 8):
  * one definition, compiled identically into both binaries, so the two cores can
- * never disagree about the layout. See HANDOFF.md section 16.
+ * never disagree about the layout. See docs/ARCHITECTURE.md section 9.
  *
  *  Memory model - lock-free single-producer/single-consumer (SPSC) ring, with
  *  NO per-record hardware semaphore:

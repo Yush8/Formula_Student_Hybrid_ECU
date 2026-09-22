@@ -86,9 +86,16 @@ static const LayoutEntry_t LAYOUT[] = {
 /* Flash layout                                                       */
 /*                                                                    */
 /* CM7 code runs from bank 1, so we keep the config in BANK 2's last  */
-/* sector. The H7 only allows read-while-write across banks, so this  */
-/* lets a save erase/program without stalling the running CPU. The    */
-/* CM4 stub lives at the start of bank 2 and never reaches sector 7.  */
+/* sector. The H7 only allows read-while-write ACROSS banks, so a     */
+/* save can erase/program without stalling the CM7 control loop.      */
+/*                                                                    */
+/* CAVEAT: CM4 EXECUTES FROM BANK 2. Its instruction fetches stall    */
+/* for the duration of this erase, so a `save` briefly freezes the    */
+/* SD logger and the log ring can overflow. Acceptable only because   */
+/* `save` is a stationary / pit action - see docs/STATUS.md 3.2.      */
+/* CM4's image starts at 0x08100000 and is far short of sector 7      */
+/* today, but its linker FLASH region still spans the whole bank, so  */
+/* nothing yet stops it growing into this sector.                     */
 /* ================================================================== */
 #define CONFIG_FLASH_ADDR    0x081E0000UL    /* bank 2, sector 7 start */
 #define CONFIG_FLASH_BANK    FLASH_BANK_2

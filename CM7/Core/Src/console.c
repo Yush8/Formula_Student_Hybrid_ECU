@@ -50,9 +50,16 @@ void Console_Out(const char *s)
     Console_Write((const uint8_t *)s, (uint16_t)strlen(s));
 }
 
+/* STATIC buffer on purpose: CDC_Transmit_FS does NOT copy - USBD_CDC_SetTxBuffer
+ * just stores the pointer and the USB endpoint reads from it AFTER this function
+ * has returned. A local would have its stack frame popped immediately and any
+ * interrupt (TIM6 at 100 Hz, FDCAN) would reuse that memory mid-transfer, so the
+ * host receives garbage. Same reason telem.c's s_frame and can_sniffer.c's
+ * s_stream are static. Safe to share one buffer: every caller is the superloop
+ * console path (Console_Poll -> process_line), never an ISR, never reentrant. */
 static void Console_Printf(const char *fmt, ...)
 {
-    char buf[128];
+    static char buf[128];
     va_list ap;
     va_start(ap, fmt);
     int len = vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -175,7 +182,7 @@ static void cmd_stats(void)
      *           The model's command is overridden until `safety reset` / power-cycle.
      *   WARN -> not enforcing now, but a freeze has latched since boot (count>0).
      *   OK   -> model is alive and has AIR authority. (SDC intent lives in the model
-     *           + the hardware shutdown cutoff - not policed here; see HANDOFF §18.) */
+     *           + the hardware shutdown cutoff - not policed here; docs/ARCHITECTURE.md section 5.) */
     const char *astate;
     if      (g_air_safety.stall_latched)        astate = "FAIL  stall-latched (loop froze) ";
     else if (!g_air_safety.armed)               astate = "----  not armed (no model step)  ";

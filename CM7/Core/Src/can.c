@@ -372,7 +372,9 @@ void Can_ClearStats(void)
 void Can_DumpTx(void)
 {
     FDCAN_GlobalTypeDef *regs[2] = { BUS1_HANDLE.Instance, BUS2_HANDLE.Instance };
-    char b[192];
+    /* static: CDC_Transmit_FS does not copy - the USB endpoint reads this buffer
+     * after Console_Out returns, so it must outlive the call (see console.c). */
+    static char b[192];
     for (uint8_t i = 0; i < 2u; i++) {
         FDCAN_GlobalTypeDef *R = regs[i];
         uint32_t cccr = R->CCCR, psr = R->PSR, txbc = R->TXBC, txfqs = R->TXFQS;

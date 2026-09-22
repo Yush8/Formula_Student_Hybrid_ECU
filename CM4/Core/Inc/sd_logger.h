@@ -9,7 +9,7 @@
  * 512-byte sectors and writes them to microSD via FatFs, rotating to a new
  * LOGxxxx.BIN file by size. The card is the slow, stall-prone device - keeping
  * it entirely on CM4 is what guarantees the CM7 100 Hz control loop can never be
- * blocked by an SD flush (HANDOFF s16.1).
+ * blocked by an SD flush (docs/ARCHITECTURE.md section 9).
  *
  * Mount is ATTEMPTED, not asserted: no card (or a write error) => logging is
  * silently disabled and CM7 is utterly unaffected ("any doubt -> safe").

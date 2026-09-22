@@ -186,7 +186,9 @@ uint32_t Telem_Count(void) { return (uint32_t)TELEM_SIGNAL_COUNT; }
 /* ----- `telem list` : the schema the GUI uses to lay out its grid ----- */
 static void schema_line(const char *name, const char *type, int len)
 {
-    char buf[48];
+    /* static: CDC_Transmit_FS does not copy - the USB endpoint reads this after
+     * Console_Out returns, so it must outlive the call (see console.c). */
+    static char buf[48];
     snprintf(buf, sizeof buf, "%s %s %d\r\n", name, type, len);
     Console_Out(buf);
 }
@@ -212,7 +214,7 @@ void Telem_PrintSchema(void)
 
 void Telem_PrintStatus(void)
 {
-    char buf[64];
+    static char buf[64];       /* static: USB TX reads it after Console_Out returns */
     snprintf(buf, sizeof buf, "telem %s  rate %lu Hz  signals %lu\r\n",
              s_on ? "on" : "off",
              (unsigned long)Telem_GetRateHz(),
