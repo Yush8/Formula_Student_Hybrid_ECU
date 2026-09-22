@@ -85,24 +85,34 @@ class SnifferMixin:
                   text="  · holds the worst inter-frame gap seen; resets on stream on/off + Clear"
                   ).pack(side="left", padx=6)
 
+        # Ids the firmware routes but that have never arrived: a node that is off
+        # or unwired. Names come from can1/can2_messages.def via configgui.candb.
+        self.sniff_missing_lbl = ttk.Label(peakbar, text="", foreground=UI["muted"],
+                                           background=UI["card"], font=FONT_MONO)
+        self.sniff_missing_lbl.pack(side="right")
+
         # The live trace grid: one row per (bus, id), updating in place.
         body = ttk.LabelFrame(parent, text="Live bus (every CAN id the board receives)")
         body.pack(fill="both", expand=True, padx=8, pady=(2, 4))
 
-        cols = ("bus", "id", "dlc", "data", "count", "rate", "age")
+        cols = ("bus", "id", "name", "dlc", "data", "count", "rate", "age")
         self.tree_sniff = ttk.Treeview(body, columns=cols, show="headings",
                                        selectmode="browse")
-        headings = {"bus": "Bus", "id": "ID", "dlc": "DLC", "data": "Data (hex)",
+        headings = {"bus": "Bus", "id": "ID", "name": "Name (from the .def)",
+                    "dlc": "DLC", "data": "Data (hex)",
                     "count": "Count", "rate": "Hz", "age": "Age ms"}
-        widths = {"bus": 45, "id": 70, "dlc": 45, "data": 300,
-                  "count": 90, "rate": 70, "age": 80}
-        anchors = {"data": "w", "id": "w"}
+        widths = {"bus": 45, "id": 70, "name": 200, "dlc": 45, "data": 260,
+                  "count": 80, "rate": 60, "age": 70}
+        anchors = {"data": "w", "id": "w", "name": "w"}
         for c in cols:
             self.tree_sniff.heading(c, text=headings[c])
             self.tree_sniff.column(c, width=widths[c], anchor=anchors.get(c, "center"),
                                    stretch=(c == "data"))
         self.tree_sniff.tag_configure("changed", foreground=UI["accent_hi"])
         self.tree_sniff.tag_configure("stale", foreground=UI["muted"])
+        # An id the firmware routes nothing for is unexplained traffic. Worth
+        # seeing, because a hex dump alone can never tell you it is unexpected.
+        self.tree_sniff.tag_configure("unknown", foreground=UI["amber"])
         # Data column reads best monospaced. Copy the base Treeview layout onto the
         # custom style so the rows still render (a bare custom style can lose it).
         style = ttk.Style()
@@ -237,14 +247,20 @@ class SnifferMixin:
 
         data_disp = " ".join(data_hex[i:i + 2] for i in range(0, len(data_hex), 2))
         rate_disp = f"{rate:.0f}" if rate >= 10 else f"{rate:.1f}"
-        values = (bus, f"0x{id_hex}", dlc, data_disp, count, rate_disp, age)
+        # The firmware's own name for this id, read straight from
+        # can1/can2_messages.def - so it can never drift from what the board
+        # actually routes. Blank means nothing routes it.
+        name = self.candb.name_for(bus, int(id_hex, 16))
+        values = (bus, f"0x{id_hex}", name or "(not routed)", dlc, data_disp,
+                  count, rate_disp, age)
 
         changed = self._sniff_data.get(key) != data_disp
         self._sniff_data[key] = data_disp
 
+        base = () if name else ("unknown",)
         if key in self._sniff_order:
             self.tree_sniff.item(key, values=values,
-                                 tags=("changed",) if changed else ())
+                                 tags=("changed",) if changed else base)
         else:
             self._show_sniff_empty(False)
             self.tree_sniff.insert("", "end", iid=key, values=values,
@@ -292,5 +308,64 @@ class SnifferMixin:
                 age = int(self.tree_sniff.set(key, "age"))
             except (ValueError, tk.TclError):
                 age = 0
-            self.tree_sniff.item(key, tags=("stale",) if age > SNIFF_STALE_MS else ())
+            if age > SNIFF_STALE_MS:
+                tags = ("stale",)
+            else:
+                name = self.tree_sniff.set(key, "name")
+                tags = () if name and name != "(not routed)" else ("unknown",)
+            self.tree_sniff.item(key, tags=tags)
+        self._sniff_update_missing()
         self.root.after(1000, self._sniff_tick)
+
+    # ---- expected-but-absent ids ----
+    def _sniff_seen_ids(self):
+        """bus -> set of ids actually observed, for the missing-id check."""
+        out = {1: set(), 2: set()}
+        for key in self._sniff_order:
+            bus_s, id_s = key.split(":")
+            try:
+                out.setdefault(int(bus_s), set()).add(int(id_s, 16))
+            except ValueError:
+                pass
+        return out
+
+    def _sniffer_seen_ids(self):
+        return self._sniff_seen_ids()
+
+    def _sniffer_export_rows(self):
+        """Every row as plain tuples, for the debug bundle's can.csv."""
+        rows = []
+        for key in self._sniff_order:
+            try:
+                v = self.tree_sniff.item(key, "values")
+                bus_s, id_s = key.split(":")
+                rows.append((int(bus_s), int(id_s, 16), v[2], v[5], v[6], v[7], v[4]))
+            except (ValueError, IndexError, tk.TclError):
+                continue
+        return rows
+
+    def _sniff_update_missing(self):
+        """An id the firmware expects but has never seen is usually a node that
+        is off or unwired. The sniffer alone cannot tell you this, because it
+        only ever shows what DID arrive."""
+        if not self._sniff_streaming:
+            return
+        missing = self.candb.missing(self._sniff_seen_ids())
+        if not missing:
+            self.sniff_missing_lbl.config(
+                text="all %d expected ids seen" % self.candb.count(),
+                foreground=UI["green"])
+            return
+        # Ids only, grouped by bus: the names are in the grid already, and a long
+        # list here would run off the end of the window.
+        by_bus = {}
+        for bus, cid, _name in missing:
+            by_bus.setdefault(bus, []).append("0x%03X" % cid)
+        parts = []
+        for bus in sorted(by_bus):
+            ids = by_bus[bus]
+            shown = ", ".join(ids[:4]) + ("…" if len(ids) > 4 else "")
+            parts.append("bus%d %s" % (bus, shown))
+        self.sniff_missing_lbl.config(
+            text="NOT SEEN (%d): %s" % (len(missing), "  ".join(parts)),
+            foreground=UI["amber"])

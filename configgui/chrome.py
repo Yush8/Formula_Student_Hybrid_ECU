@@ -1,11 +1,11 @@
 """
-configgui.chrome  --  the top chrome + the global board actions.
+configgui.chrome  --  the live state strip, the page area and the board actions.
 
-ChromeMixin builds the always-on frame around the tabs (title band, connection
-bar, board-action bar, and the merged Drive + controller-state banner), assembles
-the notebook, and holds the board-wide command buttons (list / ping / stats /
-save / defaults / clock) plus the momentary START and CLEAR-FAULT controls. The
-per-tab bodies live in their own mixins; this file only wires the shell together.
+ChromeMixin builds the Drive + controller-state strip (START, CLEAR FAULT, the
+supervisor banner and the HV lamps), assembles the notebook of pages, builds the
+Console page, and holds the board-wide commands (list / ping / stats / save /
+defaults / clock) that the Board menu calls. The title row, the tab buttons, the
+connection pill and the menus themselves live in configgui/shell.py.
 """
 
 import datetime
@@ -15,99 +15,39 @@ from tkinter import ttk, messagebox
 
 from .theme import UI, FONT_UI_SM, FONT_UI_B, FONT_MONO
 from .protocol import (
-    BAUDS, START_PARAM, START_PULSE_MS, RESET_PARAM, RESET_PULSE_MS,
+    START_PARAM, START_PULSE_MS, RESET_PARAM, RESET_PULSE_MS,
     HV_ENABLE_LAMPS, SUPERVISOR_STATES, FAULT_CODES,
-    DRIVE_MODE_SIGNAL, DRIVE_MODES,
+    DRIVE_MODES,
 )
+
+# The console text widget is capped so an all-day session cannot make the whole
+# GUI sluggish; trimming in blocks keeps the common case free. The full text is
+# still recorded to the session's console.log, so nothing is actually lost.
+CONSOLE_MAX_LINES = 4000
+CONSOLE_TRIM_BLOCK = 500
+
+# Commands the board understands, for Tab completion. Parameter names are NOT
+# listed here - they come from what the board reported, so completion always
+# matches the firmware in front of you.
+BOARD_COMMANDS = [
+    "help", "list", "get", "set", "save", "defaults", "time", "version",
+    "stats", "safety", "telem", "cansniff", "canreg", "events", "ping",
+]
+
+
+def _common_prefix(items):
+    if not items:
+        return ""
+    head = items[0]
+    for other in items[1:]:
+        while not other.lower().startswith(head.lower()):
+            head = head[:-1]
+            if not head:
+                return ""
+    return head
 
 
 class ChromeMixin:
-    # ---------------- header / bars ----------------
-    def _build_header(self):
-        """A slim title band so the tool opens with an identity instead of a bare
-        row of buttons. Cosmetic only."""
-        band = ttk.Frame(self.root, style="Header.TFrame")
-        band.pack(fill="x")
-        inner = ttk.Frame(band, style="Header.TFrame")
-        inner.pack(fill="x", padx=16, pady=(4, 3))
-
-        title = ttk.Frame(inner, style="Header.TFrame")
-        title.pack(side="left")
-        ttk.Label(title, text="◆ HCU", style="H1Accent.TLabel").pack(side="left")
-        ttk.Label(title, text=" V2", style="H1.TLabel").pack(side="left")
-        ttk.Label(title, text="   CONSOLE", style="H2.TLabel").pack(
-            side="left", pady=(4, 0))
-
-        ttk.Label(inner,
-                  text="Formula Student · Hybrid Control Unit · trackside console",
-                  style="H2.TLabel").pack(side="right", pady=(4, 0))
-
-        tk.Frame(self.root, height=2, background=UI["accent"]).pack(fill="x")
-
-    def _build_connection_bar(self):
-        f = ttk.LabelFrame(self.root, text="Connection")
-        f.pack(fill="x", padx=8, pady=(4, 2))
-
-        ttk.Label(f, text="Port:").grid(row=0, column=0, padx=4, pady=3, sticky="w")
-        self.port_cb = ttk.Combobox(f, width=26, state="readonly")
-        self.port_cb.grid(row=0, column=1, padx=4, pady=3)
-        ttk.Button(f, text="↻", width=3, command=self.refresh_ports).grid(row=0, column=2, padx=2)
-
-        ttk.Label(f, text="Baud:").grid(row=0, column=3, padx=4)
-        self.baud_cb = ttk.Combobox(f, width=8, state="readonly", values=BAUDS)
-        self.baud_cb.set("115200")
-        self.baud_cb.grid(row=0, column=4, padx=4)
-
-        self.connect_btn = ttk.Button(f, text="Connect", style="Accent.TButton",
-                                       command=self.toggle_connection)
-        self.connect_btn.grid(row=0, column=5, padx=6)
-
-        ttk.Checkbutton(f, text="Auto-reconnect", variable=self.auto_reconnect_var,
-                        command=self._save_settings).grid(row=0, column=6, padx=6)
-
-        self.status_lbl = ttk.Label(f, text="● disconnected",
-                                    font=FONT_UI_B, foreground=UI["red_hi"])
-        self.status_lbl.grid(row=0, column=7, padx=8)
-
-    def _build_actions_bar(self):
-        f = ttk.LabelFrame(self.root, text="Board")
-        f.pack(fill="x", padx=8, pady=2)
-
-        bar = ttk.Frame(f)
-        bar.pack(fill="x", padx=4, pady=2)
-
-        self.refresh_all_btn = ttk.Button(bar, text="Refresh all (list)", command=self.rescan_all)
-        self.refresh_all_btn.pack(side="left")
-        self.ping_btn = ttk.Button(bar, text="Ping", command=self.cmd_ping)
-        self.ping_btn.pack(side="left", padx=6)
-
-        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
-
-        # Health readout. Output lands in the Console tab (multi-line).
-        self.stats_btn = ttk.Button(bar, text="Stats", command=self.cmd_stats)
-        self.stats_btn.pack(side="left")
-        self.clearstats_btn = ttk.Button(bar, text="Clear stats", command=self.cmd_stats_clear)
-        self.clearstats_btn.pack(side="left", padx=6)
-
-        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
-
-        self.save_btn = ttk.Button(bar, text="Save to flash", command=self.cmd_save)
-        self.save_btn.pack(side="left")
-        self.defaults_btn = ttk.Button(bar, text="Load defaults", command=self.cmd_defaults)
-        self.defaults_btn.pack(side="left", padx=6)
-
-        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
-
-        self.settime_btn = ttk.Button(bar, text="Set clock → PC time", command=self.cmd_set_time_now)
-        self.settime_btn.pack(side="left")
-        self.gettime_btn = ttk.Button(bar, text="Show time", command=self.cmd_get_time)
-        self.gettime_btn.pack(side="left", padx=6)
-        self.clock_var = tk.StringVar(value="—")
-        ttk.Label(bar, text="Board clock:", style="Muted.TLabel").pack(
-            side="left", padx=(8, 2))
-        ttk.Label(bar, textvariable=self.clock_var, foreground=UI["accent_hi"],
-                  background=UI["card"], font=FONT_MONO).pack(side="left")
-
     # ---- Drive control + controller-state banner (one compact row) ----
     def _build_drive_state_bar(self):
         """The START button, the live Safety_Supervisor state, and the HV-actuator
@@ -120,11 +60,15 @@ class ChromeMixin:
         Start_Button, so every interlock (HV / precharge / APPS / engine-sync /
         AIR fail-safe) still applies - it can request start, never bypass a gate.
         The state readout + lamps light up once the board streams the signals."""
-        f = ttk.LabelFrame(self.root, text="Drive  ·  controller state (live)")
-        f.pack(fill="x", padx=8, pady=2)
+        # A plain strip rather than a titled box: it is the one piece of live
+        # state worth keeping on screen on every page, so it earns its row but
+        # not a heading. Hideable from Board > View.
+        f = tk.Frame(self.root, background=UI["page"])
+        f.pack(fill="x", padx=8, pady=(6, 0))
+        self.drive_bar = f
 
-        bar = ttk.Frame(f)
-        bar.pack(fill="x", padx=4, pady=3)
+        bar = tk.Frame(f, background=UI["page"])
+        bar.pack(fill="x", pady=0)
 
         # tk.Button (not ttk) so we can colour it like a real start button.
         self.start_btn = tk.Button(
@@ -254,31 +198,78 @@ class ChromeMixin:
 
     # ---------------- notebook assembly ----------------
     def _build_notebook(self):
-        nb = ttk.Notebook(self.root)
-        nb.pack(fill="both", expand=True, padx=8, pady=(2, 4))
+        # The notebook still switches pages, but its own tab row is hidden:
+        # the tab buttons live in the title row (configgui/shell.py).
+        nb = ttk.Notebook(self.root, style="Tabless.TNotebook")
+        nb.pack(fill="both", expand=True, padx=8, pady=(6, 6))
         self.notebook = nb
 
         self.tab_config = ttk.Frame(nb)
         self.tab_telem = ttk.Frame(nb)
         self.tab_plot = ttk.Frame(nb)
+        self.tab_health = ttk.Frame(nb)
+        self.tab_events = ttk.Frame(nb)
         self.tab_sniffer = ttk.Frame(nb)
+        self.tab_sessions = ttk.Frame(nb)
         self.tab_console = ttk.Frame(nb)
+        # Ordered the way you actually debug: watch it, graph it, check its
+        # health, read what happened, look at the bus, then the recordings,
+        # then tuning, then the raw text.
         nb.add(self.tab_telem, text="Live Telemetry")
         nb.add(self.tab_plot, text="Plot")
+        nb.add(self.tab_health, text="Health")
+        nb.add(self.tab_events, text="Events")
         nb.add(self.tab_sniffer, text="CAN Bus")
+        nb.add(self.tab_sessions, text="Sessions")
         nb.add(self.tab_config, text="Config")
         nb.add(self.tab_console, text="Console")
 
+        # Telemetry first: the Plot / Events tabs hook into the signal list it
+        # builds, and the Sessions tab reads the recorder those hooks feed.
         self._build_telem_panel(self.tab_telem)
         self._build_plot_panel(self.tab_plot)
+        self._build_health_panel(self.tab_health)
+        self._build_events_panel(self.tab_events)
         self._build_sniffer_panel(self.tab_sniffer)
+        self._build_sessions_panel(self.tab_sessions)
         self._build_var_panel(self.tab_config)
         self._build_console_panel(self.tab_console)
 
     def _build_console_panel(self, parent):
+        """The raw text log, plus the things that make it usable for a long
+        session: timestamps, a search box, history on the up-arrow, completion
+        from the commands the board actually has, and a cap so an all-day run
+        cannot grow the widget without limit."""
         from tkinter import scrolledtext
+        self._con_history = []        # commands you have typed, newest last
+        self._con_hist_pos = None     # where up/down currently is
+        self._con_stamp = tk.BooleanVar(value=True)
+        self._con_autoscroll = tk.BooleanVar(value=True)
+
         f = ttk.Frame(parent)
         f.pack(fill="both", expand=True, padx=8, pady=4)
+
+        bar = ttk.Frame(f)
+        bar.pack(fill="x", padx=4, pady=(0, 2))
+        ttk.Checkbutton(bar, text="Timestamps", variable=self._con_stamp).pack(side="left")
+        ttk.Checkbutton(bar, text="Auto-scroll",
+                        variable=self._con_autoscroll).pack(side="left", padx=6)
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Label(bar, text="Find:").pack(side="left", padx=(0, 2))
+        self._con_find_var = tk.StringVar()
+        fe = ttk.Entry(bar, textvariable=self._con_find_var, width=20)
+        fe.pack(side="left")
+        fe.bind("<Return>", lambda _e: self._con_find_next())
+        ttk.Button(bar, text="Next", width=5,
+                   command=self._con_find_next).pack(side="left", padx=(2, 0))
+        ttk.Button(bar, text="✕", width=2,
+                   command=lambda: self._con_find_var.set("")).pack(side="left", padx=2)
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Button(bar, text="Save to file…", command=self._con_save).pack(side="left")
+        ttk.Button(bar, text="Clear", command=self._con_clear).pack(side="left", padx=6)
+        self.con_status = ttk.Label(bar, text="", foreground=UI["muted"],
+                                    background=UI["card"], font=FONT_MONO)
+        self.con_status.pack(side="right")
 
         self.log = scrolledtext.ScrolledText(f, height=10, wrap="word",
                                              font=FONT_MONO, state="disabled",
@@ -293,6 +284,9 @@ class ChromeMixin:
         self.log.tag_config("rx", foreground=UI["fg"])
         self.log.tag_config("sys", foreground=UI["muted"])
 
+        self.log.tag_config("stamp", foreground=UI["muted"])
+        self.log.tag_config("found", background=UI["accent"], foreground="#ffffff")
+
         row = ttk.Frame(f)
         row.pack(fill="x", padx=4, pady=(0, 4))
         ttk.Label(row, text="Raw:").pack(side="left")
@@ -300,7 +294,94 @@ class ChromeMixin:
         raw = ttk.Entry(row, textvariable=self.raw_var)
         raw.pack(side="left", fill="x", expand=True, padx=6)
         raw.bind("<Return>", lambda _e: self.send_raw())
+        raw.bind("<Up>", lambda _e: self._con_recall(-1))
+        raw.bind("<Down>", lambda _e: self._con_recall(1))
+        raw.bind("<Tab>", self._con_complete)
+        self.raw_entry = raw
         ttk.Button(row, text="Send", command=self.send_raw).pack(side="left")
+        ttk.Label(f, style="Muted.TLabel",
+                  text="   ↑/↓ recalls what you typed · Tab completes a command or "
+                       "parameter name · type 'help' for the board's own list").pack(
+                           anchor="w", padx=4, pady=(0, 2))
+
+    # ---- console helpers ----
+    def _con_recall(self, step):
+        """Up/down through what you have typed. Debugging is repetitive; retyping
+        `set Bench_Velocity_Mode 1` for the twentieth time is pure friction."""
+        if not self._con_history:
+            return "break"
+        if self._con_hist_pos is None:
+            self._con_hist_pos = len(self._con_history)
+        self._con_hist_pos = max(0, min(len(self._con_history),
+                                        self._con_hist_pos + step))
+        text = ("" if self._con_hist_pos >= len(self._con_history)
+                else self._con_history[self._con_hist_pos])
+        self.raw_var.set(text)
+        self.raw_entry.icursor("end")
+        return "break"
+
+    def _con_complete(self, _evt=None):
+        """Tab-complete against the board's commands and its discovered
+        parameter names - so completion always matches THIS firmware, not a
+        list baked into the GUI."""
+        text = self.raw_var.get()
+        head, _, tail = text.rpartition(" ")
+        pool = list(BOARD_COMMANDS) if not head else list(self._param_order)
+        hits = [c for c in pool if c.lower().startswith(tail.lower())]
+        if not hits:
+            return "break"
+        if len(hits) == 1:
+            self.raw_var.set((head + " " if head else "") + hits[0] + " ")
+        else:
+            common = _common_prefix(hits)
+            if len(common) > len(tail):
+                self.raw_var.set((head + " " if head else "") + common)
+            self._log("  " + "  ".join(hits[:14]) +
+                      ("  …(+%d)" % (len(hits) - 14) if len(hits) > 14 else "") +
+                      "\n", "sys")
+        self.raw_entry.icursor("end")
+        return "break"
+
+    def _con_find_next(self):
+        """Jump to the next occurrence, wrapping. A long session's console is
+        thousands of lines; scrolling it by hand is not a search."""
+        needle = self._con_find_var.get()
+        self.log.tag_remove("found", "1.0", "end")
+        if not needle:
+            return
+        start = self.log.index("insert +1c")
+        pos = self.log.search(needle, start, "end", nocase=True)
+        if not pos:
+            pos = self.log.search(needle, "1.0", "end", nocase=True)
+        if not pos:
+            self.con_status.config(text="not found", foreground=UI["amber"])
+            return
+        end = "%s +%dc" % (pos, len(needle))
+        self.log.tag_add("found", pos, end)
+        self.log.mark_set("insert", end)
+        self.log.see(pos)
+        self.con_status.config(text="", foreground=UI["muted"])
+
+    def _con_save(self):
+        from tkinter import filedialog
+        path = filedialog.asksaveasfilename(
+            title="Save console log", defaultextension=".log",
+            initialfile=datetime.datetime.now().strftime("hcu_console_%Y-%m-%d_%H%M%S.log"),
+            filetypes=[("Log file", "*.log"), ("Text file", "*.txt")])
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(self.log.get("1.0", "end"))
+            self.con_status.config(text="saved", foreground=UI["green"])
+        except OSError as e:
+            messagebox.showerror("Save console log", str(e))
+
+    def _con_clear(self):
+        self.log.config(state="normal")
+        self.log.delete("1.0", "end")
+        self.log.config(state="disabled")
+        self.con_status.config(text="", foreground=UI["muted"])
 
     # ---------------- board command senders ----------------
     def cmd_list(self):
@@ -422,15 +503,9 @@ class ChromeMixin:
 
     # ---------------- connection state + logging ----------------
     def _set_connected(self, on):
-        self.connect_btn.config(text="Disconnect" if on else "Connect")
-        self.status_lbl.config(
-            text="● connected" if on else "● disconnected",
-            foreground=UI["green"] if on else UI["red_hi"])
+        self._shell_set_connected(on)
         state = "normal" if on else "disabled"
         for b in (self.start_btn, self.reset_btn,
-                  self.refresh_all_btn, self.ping_btn, self.stats_btn,
-                  self.clearstats_btn, self.save_btn, self.defaults_btn,
-                  self.settime_btn, self.gettime_btn,
                   self.telem_btn, self.telem_refresh_btn,
                   self.sniff_btn, self.sniff_clear_btn, self.sniff_refresh_btn):
             b.config(state=state)
@@ -446,9 +521,21 @@ class ChromeMixin:
             self._update_sniffer_button()
 
     def _log(self, text, tag="rx"):
+        """Append to the console. Stamps each line with the wall clock (so you
+        can line a message up against a session) and enforces a line cap - the
+        widget used to grow unbounded for the whole session, which eventually
+        makes the whole GUI sluggish."""
         self.log.config(state="normal")
+        if self._con_stamp.get() and text.strip():
+            self.log.insert("end", datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                            + "  ", "stamp")
         self.log.insert("end", text, tag)
-        self.log.see("end")
+        # Trim from the top in blocks, so this costs nothing on a typical line.
+        lines = int(self.log.index("end-1c").split(".")[0])
+        if lines > CONSOLE_MAX_LINES + CONSOLE_TRIM_BLOCK:
+            self.log.delete("1.0", "%d.0" % (lines - CONSOLE_MAX_LINES))
+        if self._con_autoscroll.get():
+            self.log.see("end")
         self.log.config(state="disabled")
 
     def on_close(self):

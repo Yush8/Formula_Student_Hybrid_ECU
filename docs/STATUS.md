@@ -37,6 +37,10 @@ nobody has put a scope or a car on them yet. **Treat as unproven.**
 | **Torque slew limiter** | ramp time ≈ 0.20 s to full; a fault still cuts torque instantly | CONTROL_STRATEGY §7 |
 | **Launch speed gate + brake plausibility** | 5/3 km/h hysteresis; T.4.3 latch holds until APPS ≤ 5 %; confirm `UnitDelay` init = 0 and that P_TRIP = 25 is a real hard brake in ×0.01 units | CONTROL_STRATEGY §6 |
 | **Brake zero-offset fix** | full throttle now gives positive `Base_Torque_Demand` | CONTROL_STRATEGY §5 |
+| **Event recorder (`#E`)** | (a) `events` reports ~21 watched signals; (b) driving the state machine produces one line per transition, in the right order; (c) `events list` refills the GUI timeline after a reconnect; (d) nothing chatters (a flooding signal would show as `suppressed` in `events`) | EXTENDING §7 |
+| **Scheduler timing stats** | `stats` shows a sane step time (expect a few hundred µs of the 10000 µs budget) and a small lateness; the Health histogram should sit almost entirely in one band | EXTENDING §7 |
+| **`stats json`** | one `#J {...}` line, and the Health tab goes green/amber/red to match the human `stats` text | EXTENDING §7 |
+| **Session recording** | record a run, confirm the frame count climbs, then load it back and check the traces match what you watched live; `N LOST` should stay 0 at 20 Hz | EXTENDING §7 |
 | **`g_sched_overruns == 0` under logging load** | *the* proof CM7 is isolated from SD stalls. Long run including card flush/GC stalls; it must stay 0. | ARCHITECTURE §9 |
 
 ## 3. Open — safety and correctness first
@@ -164,6 +168,24 @@ dropped for this year's car.
 - Condensed the ~150-line rationale preamble in `model_bridge.c` into short
   pointers, with the full reasoning moved to `CONTROL_STRATEGY.md`.
 - Committed ~2.5 months of previously uncommitted firmware and GUI work.
+- **Full debugging upgrade** (firmware + console). Firmware gained `version`,
+  `stats json`, a `#E` event recorder driven by the new
+  `CM7/Core/Inc/event_signals.def`, and scheduler step-time/lateness statistics
+  with a histogram. The console gained a **Health** dashboard, an **Events**
+  timeline, **Sessions** (record a run to disk, load it back, scrub it), capture
+  **triggers**, a one-file **debug bundle** export, CAN id names read from the
+  `.def` files, tune save/compare/apply, and a properly usable Console tab.
+  The plot and recorder time axis is now the **board's** scheduler tick, not the
+  PC clock, and lost frames are counted rather than smoothed over.
+  See [EXTENDING.md §7](EXTENDING.md). **Firmware not yet bench-verified** —
+  it builds and links, but nothing has run on the board.
+- **Plot tab reworked** around an always-on capture buffer
+  (`configgui/history.py`). Pause is now a freeze-frame — the capture keeps
+  running underneath, so Resume is gapless and ticking a signal back-fills its
+  history instead of starting blank. Fixed the bug behind it: a remembered
+  selection was being *re-applied* on every schema refresh, so signals you
+  un-ticked kept coming back. It is now a one-shot queue, plus named watch sets
+  and a Pin lock. See [EXTENDING.md §7](EXTENDING.md).
 - Reserved the config sector from CM4's linker flash region (section 3.2).
 - Confirmed the CAN bit rates from the raw `.ioc` bit timings rather than the
   CubeMX label: FDCAN1 = 25 MHz / 1 / 25 tq = **1.000 Mbit/s**, FDCAN2 =

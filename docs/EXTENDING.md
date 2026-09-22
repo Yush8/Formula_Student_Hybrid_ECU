@@ -240,36 +240,221 @@ python ConfigGUI.py
 `matplotlib` is optional and only enables the Plot tab. tkinter ships with
 Python (on Debian/Ubuntu: `sudo apt install python3-tk`).
 
-- **Connect:** pick the board's COM port and press *Connect*. Close PuTTY first —
-  only one program can own the port. It remembers the port and **auto-reconnects**
-  if you unplug/replug or power-cycle the board.
+The window is laid out like desktop software: one title row holding the tabs,
+a **connection pill** (`● COM7 ▾`) and a **Board ▾** menu. Everything that used to
+sit in permanent bars now lives behind those two.
+
+- **Connect:** click the pill, pick the board's COM port, press *Connect*. Close
+  PuTTY first — only one program can own the port. It remembers the port and
+  **auto-reconnects** if you unplug/replug or power-cycle the board, so normally
+  you never open the panel at all. The pill turns green with the port name when
+  connected, amber while reconnecting.
+- **Board ▾** holds refresh (F5), ping, firmware version, stats, save to flash,
+  load defaults and the board clock, plus **View** options — including hiding
+  the START / state strip if you want the whole screen for a page.
 - **Parameters** appear automatically — current value on the left, type a new
   value and press *Set* (or Enter). Out-of-range values are clamped by the board
   and it tells you.
-- **Set clock → PC time:** one click sets the board's wall-clock. The board has
+- **Board ▾ › Set board clock to PC time:** one click sets the board's wall-clock. The board has
   no battery, so its clock resets on every power cycle — set it at the start of a
   session so SD-log files are timestamped. Logging works even if you forget;
   files are numbered `LOGxxxx.BIN`.
-- **Save to flash:** writes the current values so they survive a power cycle. Do
+- **Board ▾ › Save parameters to flash:** writes the current values so they survive a power cycle. Do
   this stationary, in the pit. **Load defaults** resets to the built-in values
   (then Save to keep them) — a factory reset.
 - **START** pulses the GUI start request; **CLEAR FAULT** acknowledges a latched
   supervisor error *and* clears the AIR fail-safe stall latch in one press.
 
-Five tabs:
+Eight tabs (Ctrl+1 … 8, or Ctrl+Tab to cycle). Tabs carry badges, so trouble
+shows from any page: a dot on **Health** in the colour of its worst tile, a red
+count on **Events** when something has faulted, **● REC** on **Sessions** while
+recording.
 
 | Tab | What it shows |
 |---|---|
-| **Live Telemetry** | every signal from `telem_signals.def`, updating in place. Start/Stop, rate 1–100 Hz, filter box. Rows auto-discover. |
-| **Plot** | pick signals → live strip charts (needs matplotlib) |
-| **CAN Bus** | the raw sniffer, section 5 |
-| **Config** | the tunable parameters, section 1 |
+| **Telemetry** | every signal from `telem_signals.def`, updating in place. Start/Stop, rate 1–100 Hz, filter box. Rows auto-discover. |
+| **Plot** | pick signals → live strip charts (needs matplotlib), triggers, session review. See below. |
+| **Health** | the board's own diagnostics as OK / WARN / FAIL tiles, plus loop headroom |
+| **Events** | the timeline of every discrete change, in order |
+| **CAN Bus** | the raw sniffer with names from the `.def` files, section 5 |
+| **Sessions** | record a run, load one back, export a debug bundle |
+| **Config** | the tunable parameters, section 1, plus tune save / compare |
 | **Console** | the raw text log and a box to type any command |
 
 Everything the GUI does you can type in PuTTY: `list`, `get kp`, `set kp 2`,
 `save`, `defaults`, `time`, `time set 2026-06-14 12:00:00`, `stats`,
 `safety`, `telem on|off|rate 50|list`,
 `cansniff on|off|rate 20|clear|list`, `canreg`, `ping`.
+
+### The Plot tab: what it remembers
+
+Two behaviours are worth knowing, because they are the whole point of the tab.
+
+**Every scalar signal is captured continuously** into `configgui/history.py` —
+ticked or not, paused or not. So:
+
+- ticking a signal **back-fills** its last N seconds instead of starting blank;
+- **Pause is a freeze-frame, not a stop.** The capture keeps running underneath,
+  so Resume continues the trace with no gap, and you can tick a *new* signal
+  while frozen and see what it was already doing;
+- **Clear graph** is the only control that actually forgets data — it empties
+  the buffer for every signal.
+
+The **History** combo sets how deep that buffer goes (30 s … 10 min per signal)
+and the label beside it shows what it currently costs in RAM. Depth is held in
+samples, so it is re-sized automatically when you change the telemetry rate.
+
+**Your tick list is never changed behind your back.** A remembered selection is
+applied *once*, as each row is discovered, then dropped — so a signal you
+un-tick stays un-ticked, even across a reconnect or a **Refresh signals**. (A
+signal that disappears from the board's schema is the one exception: it is
+requeued, so it returns if the board offers it again.) On top of that:
+
+- **Set** saves the current ticks under a name and swaps between arrangements —
+  keep a "Torque debug" and a "BMS" set and flip between them;
+- **Pin** locks the selection outright: nothing automatic touches it at all.
+  Picking a watch set still works, because that is you asking.
+
+Both live in `ConfigGUI.settings.json` (`plot_watch_sets`, `plot_locked`,
+`plot_history`, `plot_signals`).
+
+### The time axis is the BOARD's clock
+
+Every telemetry frame carries `tick=`, the board's 100 Hz scheduler count, and
+the console plots and records against **that**, not the PC's arrival time. USB
+delivers frames in bursts, so a PC timestamp carries tens of milliseconds of
+jitter — enough to make a measured interval a lie. Two consequences worth
+knowing:
+
+- every signal in one frame shares one exact instant, so cross-signal timing is
+  real rather than approximate;
+- a gap in the tick sequence means frames were **lost in transit**. The console
+  counts them and says so (the Sessions tab shows `N LOST` while recording, and
+  a debug bundle says it in words), instead of drawing a smooth line across a
+  hole where data should be.
+
+`BOARD_TICK_HZ` in `configgui/protocol.py` must equal `SCHED_RATE_HZ` in
+`CM7/Core/Inc/scheduler.h`. If you ever change the model's base rate, that is a
+third place to change it.
+
+### Health — the board's own diagnostics
+
+The firmware reports its health as one line of JSON (`stats json`) which the
+**Health** tab polls once a second and renders as OK / WARN / FAIL tiles: the
+control loop, each CAN bus, the SD ring and the AIR fail-safe. Two things make
+it more use than the raw counters:
+
+- counters show the **change since the last poll** beside the total, so a fault
+  happening *now* looks different from one that happened an hour ago;
+- the **loop-headroom** panel shows how long `Model_Step()` actually takes and
+  how late it starts, with a histogram. `overruns` only tells you the loop has
+  *already* missed a deadline; this tells you how much margin is left.
+
+The human-readable `stats` still works in the Console tab, and gained the same
+two timing lines.
+
+### Events — what changed, and in what order
+
+`events` streams one `#E` line the instant a watched discrete signal changes,
+raised on the model step rather than at the telemetry rate — so the **order** of
+events is exact, and nothing that lasts a single tick is missed. The Events tab
+decodes them through the same tables the banner uses:
+
+```
+ 14.500 s  FAIL   Fault_Code       no fault  ->  BMS zero-limit (DCL & CCL = 0)
+ 14.500 s  FAIL   State_Enum       DRIVE     ->  ERROR / FAULT
+ 14.500 s  WARN   Inverter_Enable  1         ->  0
+```
+
+Clicking a row freezes the Plot tab at that instant. **To add a signal to the
+timeline, add one line to `CM7/Core/Inc/event_signals.def`** — same X-macro idea
+as `telem_signals.def`. Only discrete scalars belong there: an analogue value
+would raise an event on every step, and an array will not compile (you will get
+`pointer value used where a floating-point was expected`, naming the line).
+
+The board keeps the last 48 events, so `events list` (the tab's **Fetch board
+history** button) fills the timeline after a reconnect.
+
+### Triggers — catching what you cannot sit and watch
+
+Arm a condition on the Plot tab and the console freezes itself on the instant it
+fires, with the history either side already captured:
+
+- `<signal> > < >= <= == != <value>`, or `changes`
+- `· any fault` — `Fault_Code` becomes non-zero
+- `· any red event` — anything the Events tab would colour red
+
+All are **edge** triggered, so they fire on the transition into the condition,
+not repeatedly while it holds. Tick **Auto-export** and a debug bundle is written
+to `sessions/` automatically — the point being that it happens when nobody is at
+the keyboard.
+
+### Sessions — recording a run
+
+The **Sessions** tab records everything to `sessions/<timestamp>_<name>/`:
+
+| File | Holds |
+|---|---|
+| `meta.json` | firmware, signal list, start/end, duration, your notes |
+| `telemetry.csv` | every signal, one row per frame, `tick` + `t` |
+| `events.csv` | the event timeline |
+| `health.jsonl` | the periodic `stats json` snapshots |
+| `console.log` | the raw console text |
+
+Plain text, openable in Excel, with a manifest saying what produced it. **Load
+into Plot** reads one back into the same capture buffer the live plot uses, so
+reviewing a recording uses the identical picker, watch sets and back-fill, with
+a scrub bar along the run. Live capture keeps running underneath a review, so
+**Return to live** loses nothing.
+
+**Load a log CSV…** does the same for `hcu_logdecode.py` output, so SD-card logs
+review exactly like USB sessions.
+
+### The debug bundle
+
+**Export debug bundle…** writes one `.zip`: a `README.md` that states the
+firmware, the supervisor state, what fired, what is unhealthy and the recent
+events *in words*, plus `health.json`, `version.txt`, `params.csv`, `events.csv`,
+`window.csv` (every signal over the captured window), `signals.txt`, `can.csv`
+and `console.log`.
+
+This is the thing to attach when asking anyone — or any AI — for help. Describing
+a fault in prose loses the timing, the counters and the ordering; this loses
+nothing, and it reads without access to the car.
+
+### CAN ids have names
+
+The CAN Bus tab reads `CM7/Core/Inc/can1_messages.def` and `can2_messages.def`
+directly, so every id the firmware routes is shown with its slot name, ids that
+nothing routes are flagged amber as unexplained traffic, and expected ids that
+have **never arrived** are listed (`NOT SEEN`) — usually a node that is off or
+unwired, which a hex dump can never tell you. No second table to maintain.
+
+### Config tunes
+
+**Save tune…** writes every parameter to JSON. **Compare…** shows exactly what
+differs between the board and a saved tune — the answer to "what did I change
+since lunch?" — and offers to apply it. Applying writes only the values that
+actually differ, to RAM; **Save to flash** still keeps it.
+
+### Console
+
+Timestamps per line, ↑/↓ command history, Tab completion (against the board's
+commands and *its* discovered parameter names, so it always matches the firmware
+in front of you), a find box, save-to-file, and a 4000-line cap so an all-day
+session cannot make the GUI sluggish. The full text still goes to the session's
+`console.log`.
+
+### New console commands
+
+| Command | Does |
+|---|---|
+| `version` | firmware build stamp and `.def` fingerprints |
+| `stats json` | the health data, machine-readable (`#J {...}`) |
+| `events` | event-recorder status |
+| `events on\|off` | start/stop the `#E` stream (default on) |
+| `events list` | re-emit the stored recent events |
+| `events clear` | forget the stored events |
 
 ---
 

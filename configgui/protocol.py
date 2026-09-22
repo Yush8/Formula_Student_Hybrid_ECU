@@ -19,10 +19,13 @@ from .theme import UI
 __all__ = [
     "BAUDS", "TELEM_RATES", "DEFAULT_TELEM_RATE", "SNIFF_RATES",
     "DEFAULT_SNIFF_RATE", "SNIFF_STALE_MS",
+    "PLOT_HISTORY", "PLOT_HISTORY_S", "DEFAULT_HISTORY",
     "START_PARAM", "START_PULSE_MS", "RESET_PARAM", "RESET_PULSE_MS",
     "SETTINGS_PATH", "RECONNECT_MS",
     "_VALUE_RE", "_TIME_RE", "_TELEM_STATUS_RE", "_SNIFF_STATUS_RE",
     "_SNIFF_ROW_RE", "_SCHEMA_RE", "_PARAM_SECTION_RE",
+    "_EVENT_RE", "_STATS_JSON_RE", "_VERSION_RE",
+    "BOARD_TICK_HZ", "SESSIONS_DIR", "EVENT_LABELS", "event_label",
     "STATE_SIGNAL", "SUPERVISOR_STATES", "FAULT_SIGNAL", "FAULT_CODES",
     "DRIVE_MODE_SIGNAL", "DRIVE_MODES",
     "HV_ENABLE_LAMPS", "TELEM_GROUP_ORDER", "PARAM_GROUP_ORDER",
@@ -35,6 +38,22 @@ DEFAULT_TELEM_RATE = "20"
 SNIFF_RATES = ["1", "2", "5", "10", "20", "50"]  # CAN-sniffer snapshot rates (Hz)
 DEFAULT_SNIFF_RATE = "10"
 SNIFF_STALE_MS = 1000    # grey a CAN id out if not seen for this long
+
+# The board stamps every telemetry frame and every event with the scheduler
+# tick, which runs at the model step rate. Dividing by this turns a tick into
+# seconds-since-boot, and THAT is the time axis the Plot tab and the session
+# recorder use - not the PC's arrival time, which carries USB buffering jitter
+# and would quietly make every timing measurement a lie.
+# >>> MUST equal SCHED_RATE_HZ in CM7/Core/Inc/scheduler.h <<<
+BOARD_TICK_HZ = 100.0
+
+# How deep the Plot tab's capture buffer keeps every signal: label -> seconds.
+# Deeper = further back you can look (and back-fill a freshly-ticked signal),
+# at a proportional cost in RAM, which the Plot tab prints beside the combo.
+PLOT_HISTORY = [("30 s", 30), ("1 min", 60), ("2 min", 120),
+                ("5 min", 300), ("10 min", 600)]
+PLOT_HISTORY_S = dict(PLOT_HISTORY)
+DEFAULT_HISTORY = "2 min"
 
 # The green START button pulses this boolean parameter high, then back to 0, so it
 # behaves like a momentary press of the physical PCB start button (and can never
@@ -52,6 +71,37 @@ RESET_PARAM = "Error_Reset_GUI"
 RESET_PULSE_MS = 400
 
 # Where we remember the last port / baud / auto-reconnect choice between runs.
+# Recorded sessions live beside ConfigGUI.py, one folder per session (see
+# configgui/session.py). Kept next to the settings file so everything the
+# console owns sits in one place you can zip up and send.
+SESSIONS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "sessions")
+
+# Friendly names for the firmware-internal events (the ones events.c raises
+# itself rather than reading from event_signals.def). Model signals are shown
+# under their own name, so they never need an entry here.
+EVENT_LABELS = {
+    "air.stall_latched":     "AIR fail-safe stall latch",
+    "air.armed":             "AIR fail-safe armed",
+    "air.AIR_closed":        "AIR sink closed",
+    "air.precharge_closed":  "Pre-charge sink closed",
+    "sched.first_overrun":   "FIRST loop overrun",
+    "log.first_drop":        "FIRST dropped log record",
+    "can1.first_rx_lost":    "CAN1 first lost frame",
+    "can2.first_rx_lost":    "CAN2 first lost frame",
+    "can1.first_recovery":   "CAN1 first bus-off recovery",
+    "can2.first_recovery":   "CAN2 first bus-off recovery",
+    "can1.first_tx_fail":    "CAN1 first TX failure",
+    "can2.first_tx_fail":    "CAN2 first TX failure",
+}
+
+
+def event_label(name):
+    """Human name for an event signal (falls back to the raw signal name)."""
+    return EVENT_LABELS.get(name, name)
+
+
 # This lives beside ConfigGUI.py (the repo root = the parent of this package dir),
 # so the existing ConfigGUI.settings.json keeps working after the package split.
 SETTINGS_PATH = os.path.join(
@@ -96,6 +146,19 @@ _SCHEMA_RE = re.compile(r'^([A-Za-z_]\w*)\s+([a-z0-9]+)\s+(\d+)\s*$')
 # The board interleaves these with the "name = value" lines to tell us how
 # params.def groups its parameters, so the Config tab needs no per-parameter edit.
 _PARAM_SECTION_RE = re.compile(r'^#\s*section:\s*(.+?)\s*$', re.IGNORECASE)
+
+# An event line from the board's event recorder:
+#   "#E <tick> <name> <old> <new>"
+# Emitted on the model step the instant a watched discrete signal changes, so
+# the ORDER of events is exact rather than accurate-to-one-telemetry-frame.
+_EVENT_RE = re.compile(
+    r'^#E\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s*$')
+
+# The machine-readable health dump from `stats json`: "#J {...}".
+_STATS_JSON_RE = re.compile(r'^#J\s+(\{.*\})\s*$')
+
+# The first line of `version`, e.g. "HCU V2 firmware 2.4.0".
+_VERSION_RE = re.compile(r'^HCU V2 firmware\s+(\S+)\s*$')
 
 # ---- Controller-state banner ------------------------------------------------
 # The Safety_Supervisor state machine streams its current state as a plain number

@@ -15,7 +15,7 @@ from tkinter import ttk
 
 from .theme import UI, FONT_UI_B, FONT_MONO
 from .protocol import (
-    TELEM_RATES, TELEM_GROUP_ORDER, telem_group_for,
+    TELEM_RATES, TELEM_GROUP_ORDER, telem_group_for, BOARD_TICK_HZ,
     STATE_SIGNAL, FAULT_SIGNAL, DRIVE_MODE_SIGNAL, _SCHEMA_RE,
 )
 
@@ -119,6 +119,9 @@ class TelemMixin:
 
     def _on_rate_change(self):
         self._save_settings()
+        # The Plot tab's capture buffer is sized in samples, so a rate change has
+        # to resize it or its depth in *seconds* would silently move with the rate.
+        self._plot_set_depth()
         if self._telem_streaming:
             self._send(f"telem rate {self.telem_rate_var.get()}")
 
@@ -192,15 +195,40 @@ class TelemMixin:
                 break
 
     def _handle_telem_frame(self, line):
-        # "#T tick=123 User_LED_1=1 APPS=12,0,255,..."
+        # "#T tick=123 overruns=0 User_LED_1=1 APPS=12,0,255,..."
         self._telem_frames += 1
-        t = time.time()
-        for tok in line.split()[1:]:
+        toks = line.split()[1:]
+
+        # ---- time base ----
+        # Use the BOARD's scheduler tick, not the PC's arrival time. USB delivers
+        # frames in bursts, so time.time() here carries tens of milliseconds of
+        # buffering jitter and would quietly make every plotted interval and every
+        # recorded timestamp wrong. The tick is the hardware 100 Hz model step, so
+        # all signals in a frame share one exact instant. Firmware without a tick
+        # field falls back to the wall clock.
+        tick = None
+        for tok in toks:
+            if tok.startswith("tick="):
+                try:
+                    tick = int(tok[5:])
+                except ValueError:
+                    tick = None
+                break
+        if tick is None:
+            t = time.time()
+        else:
+            t = tick / BOARD_TICK_HZ
+            self._telem_note_gap(tick)
+            self._telem_last_tick = tick
+
+        values = {}
+        for tok in toks:
             if "=" not in tok:
                 continue
             name, _, val = tok.partition("=")
             if not name:
                 continue
+            values[name] = val
             if name not in self._telem_order:
                 self._ensure_telem_row(name)     # self-discover if no schema yet
             # Tap every sample into the Plot tab (cheap no-op if not selected /
@@ -227,6 +255,36 @@ class TelemMixin:
                 self._telem_last[name] = val
                 self.tree.set(name, "value", val)
                 self.tree.item(name, tags=("changed",))
+
+        # Triggers see every sample, so a threshold crossing can freeze the plot
+        # even when you are not looking at it.
+        self._trigger_feed(values, t)
+        # Recording, if a session is running. The exact streamed strings go to
+        # disk - what the board said, not a reformat of it.
+        if tick is not None:
+            self.recorder.feed_frame(tick, values)
+
+    def _telem_note_gap(self, tick):
+        """Count telemetry frames that never reached the PC.
+
+        The board streams every Nth tick, so the tick delta between consecutive
+        frames is predictable. A bigger jump means USB dropped frames: real data
+        is missing, and a plot drawn over the hole would imply a smoothness that
+        never happened. Counting it is the difference between a gap you can see
+        and one that silently lies to you."""
+        last = self._telem_last_tick
+        if last is None or tick <= last:
+            return
+        try:
+            rate = float(self.telem_rate_var.get())
+        except (TypeError, ValueError):
+            return
+        if rate <= 0:
+            return
+        expect = BOARD_TICK_HZ / rate
+        step = tick - last
+        if step > expect * 1.5:
+            self._telem_dropped += max(0, int(round(step / expect)) - 1)
 
     def _telem_tick(self):
         # Once a second: refresh the measured stream rate and fade unchanged rows.

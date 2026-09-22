@@ -346,10 +346,18 @@ app lives in the `configgui/` package, one module per concern:
 | `theme.py` | dark palette, fonts, ttk styling |
 | `protocol.py` | line regexes + the state / fault / grouping tables |
 | `serial_io.py` | the serial link and the RX line dispatcher |
-| `chrome.py` | header, bars, board actions, START / CLEAR FAULT |
+| `shell.py` | the title row: tab buttons + badges, connection pill and panel, Board menu, shortcuts |
+| `chrome.py` | the START / state strip, page assembly, Console page, board commands |
 | `params_tab.py` | Config tab |
 | `telem_tab.py` | Live Telemetry tab |
 | `plot_tab.py` + `plot_widget.py` | live strip charts (needs matplotlib) |
+| `history.py` | the Plot tab's always-on capture buffer (every signal, ticked or not) |
+| `health_tab.py` | the Health dashboard: parses `stats json` into verdicts |
+| `events_tab.py` + `events_model.py` | the Events timeline: decodes the `#E` stream |
+| `sessions_tab.py` + `session.py` | recording a run to disk, and loading one back |
+| `trigger.py` | scope-style capture triggers |
+| `bundle.py` | the one-file debug export |
+| `candb.py` | CAN id → name, read from `can1/can2_messages.def` |
 | `sniffer_tab.py` | CAN Bus tab |
 | `app.py` | `ConsoleApp` — assembles the mixins. Composition only, no logic. |
 

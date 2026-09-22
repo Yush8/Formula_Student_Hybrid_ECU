@@ -183,6 +183,13 @@ def apply_theme(root):
            background=[("selected", card)],
            foreground=[("selected", fg), ("active", fg)])
 
+    # The main window's notebook draws NO tabs of its own - the tab buttons live
+    # in the title row (configgui/shell.py). Emptying the tab layout is the
+    # standard ttk way to hide them while keeping page switching.
+    st.layout("Tabless.TNotebook.Tab", [])
+    st.configure("Tabless.TNotebook", background=page, borderwidth=0,
+                 tabmargins=0, bordercolor=border)
+
     # Treeview (the live-telemetry grid). rowheight is THE lever for "how many
     # rows fit at once" - derive it from the font so rows are as tight as
     # possible WITHOUT clipping the text at any display scaling (DPI). A fixed

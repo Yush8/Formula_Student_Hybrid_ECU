@@ -7,11 +7,24 @@ each parameter under its board-declared section (params.def order, via the
 Set / Get. Nothing here needs editing when you add a parameter - it self-discovers.
 """
 
-import tkinter as tk
-from tkinter import ttk
+import os
+import json
+import datetime
 
-from .theme import UI, FONT_UI_SM, FONT_MONO
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+
+from .theme import UI, FONT_UI_SM, FONT_UI_B, FONT_MONO
 from .protocol import PARAM_GROUP_ORDER, param_group_for
+
+
+def _same(a, b):
+    """Compare two parameter values numerically where possible, so "2" and
+    "2.0000" are not reported as a difference."""
+    try:
+        return abs(float(a) - float(b)) < 1e-9
+    except (TypeError, ValueError):
+        return str(a).strip() == str(b).strip()
 
 
 class ParamsMixin:
@@ -30,6 +43,15 @@ class ParamsMixin:
         ttk.Label(ctl, style="Muted.TLabel",
                   text="  grouped by function · type in a field and press Enter (or Set) to write"
                   ).pack(side="left", padx=6)
+
+        # Tune snapshots. A setup is a set of numbers you arrived at over an
+        # afternoon; without this the only record of it is the board's flash,
+        # and the only way to answer "what did I change since lunch?" is memory.
+        ttk.Button(ctl, text="Compare…", command=self.cmd_params_compare).pack(
+            side="right", padx=(4, 0))
+        ttk.Button(ctl, text="Load tune…", command=self.cmd_params_load).pack(side="right")
+        ttk.Button(ctl, text="Save tune…", command=self.cmd_params_save).pack(
+            side="right", padx=4)
 
         f = ttk.LabelFrame(parent, text="Config parameters (auto-discovered from the board)")
         f.pack(fill="both", expand=True, padx=8, pady=(2, 4))
@@ -158,6 +180,154 @@ class ParamsMixin:
         self._param_section_order.clear()
         self._current_param_section = None
         self.empty_lbl.pack(anchor="w", padx=8, pady=8)  # show the hint again
+
+    # ---- tune snapshots (save / compare / apply) ----
+    def _params_snapshot(self):
+        """Every parameter and its current value, as the board last reported it."""
+        out = {}
+        for name in self._param_order:
+            p = self.params.get(name)
+            if p is not None:
+                out[name] = p["value_var"].get()
+        return out
+
+    def cmd_params_save(self):
+        """Write the current tune to JSON, stamped with the firmware's params
+        layout id so a later load can tell whether it still applies."""
+        values = self._params_snapshot()
+        if not values:
+            messagebox.showinfo("Save tune",
+                                "No parameters discovered yet - connect and "
+                                "press 'Refresh all (list)' first.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Save tune",
+            defaultextension=".json",
+            initialfile=datetime.datetime.now().strftime("tune_%Y-%m-%d_%H%M.json"),
+            filetypes=[("Tune file", "*.json")])
+        if not path:
+            return
+        blob = {
+            "saved": datetime.datetime.now().isoformat(timespec="seconds"),
+            "firmware": getattr(self, "_board_version", ""),
+            "values": values,
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(blob, fh, indent=2, sort_keys=True)
+        except OSError as e:
+            messagebox.showerror("Save tune", str(e))
+            return
+        self._log("tune saved -> %s (%d parameters)\n" % (path, len(values)), "sys")
+
+    def _params_read_file(self, title):
+        path = filedialog.askopenfilename(
+            title=title, filetypes=[("Tune file", "*.json"), ("All files", "*.*")])
+        if not path:
+            return None, None
+        try:
+            with open(path, encoding="utf-8") as fh:
+                blob = json.load(fh)
+        except (OSError, ValueError) as e:
+            messagebox.showerror(title, "Could not read that file:\n\n%s" % e)
+            return None, None
+        values = blob.get("values")
+        if not isinstance(values, dict):
+            messagebox.showerror(title, "That file has no parameter values in it.")
+            return None, None
+        return path, values
+
+    def cmd_params_compare(self):
+        """Show what differs between the board and a saved tune - the answer to
+        'what did I change?', which is otherwise unanswerable."""
+        path, saved = self._params_read_file("Compare tune")
+        if saved is None:
+            return
+        live = self._params_snapshot()
+        diffs, missing, extra = [], [], []
+        for name, was in sorted(saved.items()):
+            if name not in live:
+                missing.append(name)
+            elif not _same(live[name], was):
+                diffs.append((name, was, live[name]))
+        for name in sorted(live):
+            if name not in saved:
+                extra.append(name)
+        self._params_show_diff(path, diffs, missing, extra, saved)
+
+    def _params_show_diff(self, path, diffs, missing, extra, saved):
+        win = tk.Toplevel(self.root)
+        win.title("Compare with saved tune")
+        win.configure(background=UI["card"])
+        win.geometry("640x460")
+
+        ttk.Label(win, text=os.path.basename(path), style="Muted.TLabel").pack(
+            anchor="w", padx=10, pady=(8, 2))
+
+        head = ("identical - the board matches this tune exactly" if not diffs
+                else "%d parameter%s differ" % (len(diffs), "" if len(diffs) == 1 else "s"))
+        tk.Label(win, text=head, font=FONT_UI_B, background=UI["card"],
+                 foreground=UI["green"] if not diffs else UI["amber"]).pack(
+                     anchor="w", padx=10)
+
+        cols = ("saved", "board")
+        t = ttk.Treeview(win, columns=cols, show="tree headings", selectmode="none")
+        t.heading("#0", text="Parameter")
+        t.heading("saved", text="In the file")
+        t.heading("board", text="On the board")
+        t.column("#0", width=260, anchor="w")
+        t.column("saved", width=140, anchor="e")
+        t.column("board", width=140, anchor="e")
+        t.pack(fill="both", expand=True, padx=10, pady=6)
+        for name, was, now in diffs:
+            t.insert("", "end", text=name, values=(was, now))
+        for name in missing:
+            t.insert("", "end", text=name, values=("(in file)", "not on board"))
+        for name in extra:
+            t.insert("", "end", text=name, values=("not in file", "(on board)"))
+
+        btn = ttk.Frame(win)
+        btn.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(btn, text="Close", command=win.destroy).pack(side="right")
+        if diffs:
+            ttk.Button(btn, text="Apply the file's values to the board",
+                       style="Accent.TButton",
+                       command=lambda: (self._params_apply(saved), win.destroy())
+                       ).pack(side="right", padx=6)
+        ttk.Label(btn, style="Muted.TLabel",
+                  text="Applying writes to RAM only - press 'Save to flash' to keep it."
+                  ).pack(side="left")
+
+    def cmd_params_load(self):
+        path, saved = self._params_read_file("Load tune")
+        if saved is None:
+            return
+        live = self._params_snapshot()
+        changing = [n for n, v in saved.items() if n in live and not _same(live[n], v)]
+        if not changing:
+            messagebox.showinfo("Load tune", "The board already matches that tune.")
+            return
+        if not messagebox.askyesno(
+                "Load tune",
+                "Write %d changed parameter%s to the board?\n\n"
+                "This changes RAM only - press 'Save to flash' afterwards to keep "
+                "it. Do it stationary, not while driving."
+                % (len(changing), "" if len(changing) == 1 else "s")):
+            return
+        self._params_apply(saved)
+
+    def _params_apply(self, values):
+        """Write a tune parameter by parameter, exactly as typing `set` would.
+        Only values that actually differ are sent, so this is quiet on the wire
+        and the console log shows precisely what changed."""
+        live = self._params_snapshot()
+        sent = 0
+        for name, val in sorted(values.items()):
+            if name in live and not _same(live[name], val):
+                self._send("set %s %s" % (name, val))
+                sent += 1
+        self._log("tune applied: %d parameter(s) written to RAM\n" % sent, "sys")
+        self.root.after(300, self.rescan_params)
 
     # ---- get / set one parameter ----
     def cmd_get(self, name):

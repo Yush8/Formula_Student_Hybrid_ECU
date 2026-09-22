@@ -1,19 +1,21 @@
 """
 configgui.plot_widget  --  a live strip-chart embedded in tkinter (matplotlib).
 
-A small, reusable scrolling plot: you add named series (one per telemetry signal
-you want to watch), push (timestamp, value) samples in as they stream, and call
-redraw() on a timer. It keeps a rolling time window, autoscales Y (or normalises
-each series to 0..1 so signals of very different magnitude are comparable), and
-draws on the dark theme so it matches the rest of the console.
+A small, reusable scrolling plot. It owns the figure, one line per selected
+signal, the legend and the axes - but NOT the data: samples live in
+configgui.history.SignalHistory, which records every signal continuously. Each
+redraw() asks the history for the slice it needs. That split is what lets the
+Plot tab back-fill a freshly-ticked signal and freeze the view on Pause without
+losing a single sample.
+
+It keeps a rolling time window, autoscales Y (or normalises each series to 0..1
+so signals of very different magnitude are comparable), and draws on the dark
+theme so it matches the rest of the console.
 
 matplotlib is imported defensively: if it isn't installed the rest of the GUI
 still runs and the Plot tab shows a one-line "pip install matplotlib" hint
 (see MATPLOTLIB_OK / MATPLOTLIB_ERR and the Plot tab). Nothing else depends on it.
 """
-
-import time
-from collections import deque
 
 import tkinter as tk
 
@@ -28,11 +30,6 @@ except Exception as _e:                       # pragma: no cover - environment d
     MATPLOTLIB_OK = False
     MATPLOTLIB_ERR = str(_e)
 
-# Hard cap on stored samples per series (memory bound); the visible window is
-# trimmed from this on every redraw. At 100 Hz this is ~3 minutes of history,
-# far more than any window the user can pick.
-_MAX_POINTS = 20000
-
 
 class LivePlot(tk.Frame):
     """A scrolling multi-series strip chart. Construct only when MATPLOTLIB_OK.
@@ -40,16 +37,15 @@ class LivePlot(tk.Frame):
     Usage:
         p = LivePlot(parent)
         p.add_series("Torque_Request_Left", "#60a5fa")
-        p.push("Torque_Request_Left", t, value)   # t = time.time()
-        p.redraw()                                 # call on a timer
+        p.set_window(15.0)
+        p.redraw(history)              # live: right edge follows the clock
+        p.redraw(history, t_end=t)     # frozen: right edge pinned at t (Pause)
     """
 
     def __init__(self, master, **kw):
         super().__init__(master, **kw)
-        self._series = {}          # name -> {color, t: deque, v: deque, line}
+        self._series = {}          # name -> {"color": str, "line": Line2D}
         self._window = 15.0        # seconds shown
-        self._normalise = False
-        self._t_ref = time.time()  # so the x axis reads in seconds since plot open
 
         self.fig = Figure(figsize=(6, 3.2), dpi=100, facecolor=UI["card"])
         self.ax = self.fig.add_subplot(111)
@@ -84,10 +80,7 @@ class LivePlot(tk.Frame):
             return
         (line,) = self.ax.plot([], [], color=color, linewidth=1.4,
                                label=name, animated=False)
-        self._series[name] = {"color": color,
-                              "t": deque(maxlen=_MAX_POINTS),
-                              "v": deque(maxlen=_MAX_POINTS),
-                              "line": line}
+        self._series[name] = {"color": color, "line": line}
         self._rebuild_legend()
 
     def remove_series(self, name):
@@ -104,32 +97,14 @@ class LivePlot(tk.Frame):
         for name in list(self._series):
             self.remove_series(name)
 
-    def clear_data(self):
-        """Drop all samples but keep the selected series (a fresh time base)."""
-        self._t_ref = time.time()
-        for s in self._series.values():
-            s["t"].clear()
-            s["v"].clear()
-
-    # ---- data + config ----
-    def push(self, name, t, v):
-        s = self._series.get(name)
-        if s is None:
-            return
-        s["t"].append(t)
-        s["v"].append(v)
-
-    def latest(self, name):
-        s = self._series.get(name)
-        if not s or not s["v"]:
-            return None
-        return s["v"][-1]
-
+    # ---- config ----
     def set_window(self, seconds):
         self._window = float(seconds)
 
     def set_normalise(self, on):
         self._normalise = bool(on)
+
+    _normalise = False
 
     # ---- rendering ----
     def _rebuild_legend(self):
@@ -145,46 +120,41 @@ class LivePlot(tk.Frame):
             if leg is not None:
                 leg.set_zorder(5)
 
-    def redraw(self):
-        """Recompute the rolling window and repaint. Cheap to call on a timer."""
+    def redraw(self, history, t_end=None):
+        """Repaint from `history`. t_end=None tracks the live right edge; passing
+        a timestamp pins it there, which is how Pause freezes the view without
+        interrupting the capture underneath. Cheap to call on a timer."""
         if not self._series:
             self.canvas.draw_idle()
             return
 
-        # Right edge = the newest sample across all series (fall back to wall clock
-        # so an idle plot still scrolls instead of freezing at the last frame).
-        t_now = self._t_ref
-        for s in self._series.values():
-            if s["t"]:
-                t_now = max(t_now, s["t"][-1])
-        t_now = max(t_now, time.time() - 0)   # keep advancing while idle
-        t_lo = t_now - self._window
+        if t_end is None:
+            # Right edge = "now" ON THE BOARD'S CLOCK. Samples are stamped with
+            # the board's seconds-since-boot, so mixing in the PC's epoch time
+            # here would put the visible window billions of seconds away from the
+            # data and draw nothing. projected_now() advances the newest sample by
+            # however long ago it arrived, so an idle plot still scrolls.
+            t_end = history.projected_now()
+        t_lo = t_end - self._window
 
         y_lo, y_hi = None, None
-        for s in self._series.values():
-            ts, vs = s["t"], s["v"]
-            # Visible slice: walk back from the end while within the window.
-            xs, ys = [], []
-            for i in range(len(ts) - 1, -1, -1):
-                if ts[i] < t_lo:
-                    break
-                xs.append(ts[i] - t_now)      # 0 at the right edge, negative to left
-                ys.append(vs[i])
-            xs.reverse()
-            ys.reverse()
+        for name, s in self._series.items():
+            ts, vs = history.window(name, t_lo, t_end)
+            xs = ts - t_end if len(ts) else ts     # 0 at the right edge, negative left
 
-            if self._normalise and ys:
-                lo, hi = min(ys), max(ys)
+            if self._normalise and len(vs):
+                lo, hi = float(vs.min()), float(vs.max())
                 span = (hi - lo) or 1.0
-                plot_ys = [(y - lo) / span for y in ys]
+                plot_ys = (vs - lo) / span
             else:
-                plot_ys = ys
+                plot_ys = vs
 
             s["line"].set_data(xs, plot_ys)
 
-            for y in plot_ys:
-                y_lo = y if y_lo is None else min(y_lo, y)
-                y_hi = y if y_hi is None else max(y_hi, y)
+            if len(plot_ys):
+                lo, hi = float(plot_ys.min()), float(plot_ys.max())
+                y_lo = lo if y_lo is None else min(y_lo, lo)
+                y_hi = hi if y_hi is None else max(y_hi, hi)
 
         self.ax.set_xlim(-self._window, 0)
 

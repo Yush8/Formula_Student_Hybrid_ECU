@@ -29,6 +29,9 @@ slprj/
 # Captured SD-card data logs
 LOG*.csv
 
+# ConfigGUI recorded sessions + auto-exported debug bundles (captured run data)
+sessions/
+
 # Python (ConfigGUI)
 __pycache__/
 *.pyc

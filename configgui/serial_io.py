@@ -15,16 +15,16 @@ other mixins.
 import json
 import queue
 import threading
+import time
 
 import serial
 import serial.tools.list_ports
 from tkinter import messagebox
 
-from .theme import UI
 from .protocol import (
-    BAUDS, TELEM_RATES, SNIFF_RATES, DEFAULT_TELEM_RATE, SETTINGS_PATH,
+    BAUDS, TELEM_RATES, SNIFF_RATES, DEFAULT_TELEM_RATE, PLOT_HISTORY_S, SETTINGS_PATH,
     RECONNECT_MS, _PARAM_SECTION_RE, _TELEM_STATUS_RE, _SNIFF_STATUS_RE,
-    _VALUE_RE, _TIME_RE,
+    _VALUE_RE, _TIME_RE, _EVENT_RE, _STATS_JSON_RE, _VERSION_RE,
 )
 
 
@@ -43,15 +43,35 @@ class SerialMixin:
         rate = str(s.get("telem_rate", DEFAULT_TELEM_RATE))
         if rate in TELEM_RATES:
             self.telem_rate_var.set(rate)
-        # Plot tab preferences (applied by the Plot tab as signals are discovered).
-        self._plot_saved_signals = list(s.get("plot_signals", []))
+        # Plot tab preferences. The selection is a QUEUE, not a standing order:
+        # the Plot tab ticks each name once, as its row is discovered, then drops
+        # it - so a signal you un-tick this session never comes back (see
+        # plot_tab._plot_apply_pending).
+        self._plot_pending = list(s.get("plot_signals", []))
+        self._plot_sets = {k: list(v) for k, v in
+                           (s.get("plot_watch_sets") or {}).items() if v}
         win = s.get("plot_window")
         if win and hasattr(self, "plot_window_var"):
             self.plot_window_var.set(str(win))
         if hasattr(self, "plot_norm_var"):
             self.plot_norm_var.set(bool(s.get("plot_normalise", False)))
+        if hasattr(self, "plot_hist_var"):
+            hist = s.get("plot_history")
+            if hist in PLOT_HISTORY_S:
+                self.plot_hist_var.set(hist)
+        if hasattr(self, "plot_lock_var"):
+            self.plot_lock_var.set(bool(s.get("plot_locked", False)))
+        if hasattr(self, "plot_set_var"):
+            last = s.get("plot_last_set")
+            if last in self._plot_sets:
+                self.plot_set_var.set(last)
         if hasattr(self, "_apply_saved_plot_signals"):
             self._apply_saved_plot_signals()
+        # View: the START / state strip can be hidden from Board > View.
+        if hasattr(self, "show_drive_var"):
+            self.show_drive_var.set(bool(s.get("show_drive_bar", True)))
+            if not self.show_drive_var.get():
+                self.drive_bar.pack_forget()
         dev = s.get("last_port")
         if dev:
             self._target_device = dev
@@ -75,6 +95,16 @@ class SerialMixin:
             data["plot_window"] = self.plot_window_var.get()
         if hasattr(self, "plot_norm_var"):
             data["plot_normalise"] = bool(self.plot_norm_var.get())
+        if hasattr(self, "plot_hist_var"):
+            data["plot_history"] = self.plot_hist_var.get()
+        if hasattr(self, "plot_lock_var"):
+            data["plot_locked"] = bool(self.plot_lock_var.get())
+        if hasattr(self, "_plot_sets"):
+            data["plot_watch_sets"] = {k: list(v) for k, v in self._plot_sets.items()}
+        if hasattr(self, "plot_set_var"):
+            data["plot_last_set"] = self.plot_set_var.get()
+        if hasattr(self, "show_drive_var"):
+            data["show_drive_bar"] = bool(self.show_drive_var.get())
         try:
             with open(SETTINGS_PATH, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2)
@@ -155,7 +185,7 @@ class SerialMixin:
             return
         if not (self.auto_reconnect_var.get() and self._target_device):
             return
-        self.status_lbl.config(text="● reconnecting…", foreground=UI["amber"])
+        self._shell_set_status("reconnecting")
         self._reconnect_after = self.root.after(RECONNECT_MS, self._try_reconnect)
 
     def _cancel_reconnect(self):
@@ -200,9 +230,28 @@ class SerialMixin:
             self._log(f"send error: {e}\n", "sys")
             self._handle_serial_error()
 
+    def _send_quiet(self, text):
+        """Send without echoing to the Console tab and without a popup if the
+        link is down. For polled background commands (the Health tab asks for
+        `stats json` once a second) - echoing those would bury everything you
+        actually typed."""
+        if not (self.ser and self.ser.is_open):
+            return
+        try:
+            self.ser.write((text + "\r\n").encode("utf-8"))
+        except Exception as e:
+            self._log(f"send error: {e}\n", "sys")
+            self._handle_serial_error()
+
     def send_raw(self):
         text = self.raw_var.get().strip()
         self.raw_var.set("")
+        # Remember it for the up-arrow, skipping an immediate repeat so holding
+        # up does not walk through ten copies of the same command.
+        if text and (not self._con_history or self._con_history[-1] != text):
+            self._con_history.append(text)
+            del self._con_history[:-200]
+        self._con_hist_pos = None
         self.send_raw_text(text)
 
     def send_raw_text(self, text):
@@ -240,6 +289,20 @@ class SerialMixin:
                 self._handle_sniffer_frame(ln)
                 continue
 
+            # 1c) Board event -> the Events timeline. Kept out of the console so
+            # a burst of state changes cannot bury the command output, but still
+            # recorded and still able to fire a trigger.
+            m = _EVENT_RE.match(ln)
+            if m:
+                self._handle_event_line(m)
+                continue
+
+            # 1d) Machine-readable health from `stats json` -> the Health tab.
+            m = _STATS_JSON_RE.match(ln)
+            if m:
+                self._handle_health_json(m.group(1))
+                continue
+
             # 1c) Parameter-section header from `list` -> file the parameters that
             # follow under this heading (params.def's own grouping, no edit here).
             m = _PARAM_SECTION_RE.match(ln)
@@ -263,7 +326,47 @@ class SerialMixin:
 
             # 3) Everything else: log it and try to interpret it.
             self._log(ln + "\n", "rx")
+            self.recorder.feed_console(ln + "\n")
+            self._collect_version(ln)
             self._maybe_update(ln)
+
+    # ---------------- new stream handlers ----------------
+    def _handle_event_line(self, m):
+        """One `#E <tick> <name> <old> <new>` from the board's event recorder.
+
+        The board raises these on the model step, so their ORDER is exact - which
+        is the whole reason they exist rather than being inferred from sampled
+        telemetry. Everything downstream (timeline, trigger, session) reads the
+        one decoded row."""
+        tick, signal, old, new = m.group(1), m.group(2), m.group(3), m.group(4)
+        row = self.events.add(int(tick), signal, old, new, wall=time.time())
+        self.recorder.feed_event(int(tick), signal, old, new)
+        self.trigger.note_event(row)
+        self._events_append(row)
+
+    def _handle_health_json(self, payload):
+        """One `#J {...}` health snapshot from `stats json`."""
+        try:
+            obj = json.loads(payload)
+        except ValueError:
+            return
+        self._health = obj
+        self._health_at = time.time()
+        self.recorder.feed_health(obj)
+        self._health_refresh()
+
+    def _collect_version(self, line):
+        """`version` prints a short block with no terminator, so collect from its
+        first line and stop when the block stops looking like one."""
+        if _VERSION_RE.match(line):
+            self._version_lines = [line]
+            return
+        if self._version_lines:
+            if line.startswith(" "):
+                self._version_lines.append(line)
+                self._board_version = "\n".join(self._version_lines)
+            else:
+                self._version_lines = []
 
     def _maybe_update(self, line):
         m = _TELEM_STATUS_RE.match(line)
