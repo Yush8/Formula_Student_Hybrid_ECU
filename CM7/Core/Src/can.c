@@ -13,11 +13,29 @@
  * can1_messages.def / can2_messages.def (see can.h for the recipe).
  */
 #include "can.h"
+#include "can_sniffer.h"   /* CanSniffer_Capture() - raw all-id bus observer */
+#include "console.h"       /* Console_Out() - for the `canreg` register dump */
 #include "main.h"          /* HAL + FDCAN handle types */
+#include <stdio.h>         /* snprintf for the register dump */
 
 /* CubeMX defines these at file scope in main.c. */
 extern FDCAN_HandleTypeDef hfdcan1;
 extern FDCAN_HandleTypeDef hfdcan2;
+
+/* ---- Logical bus  <->  physical peripheral -------------------------------
+ * The loom is now wired the intended way: logical bus numbering matches the
+ * physical peripheral. Logical bus 1 (can1_messages.def, dash/ECU harness,
+ * runs at 1 Mbit/s) lands on FDCAN1; logical bus 2 (can2_messages.def,
+ * tractive/inverter, 500 kbit/s) lands on FDCAN2. The ENTIRE mapping lives in
+ * these two lines - everything else in the firmware talks in logical bus 1 /
+ * bus 2 (CAN_FEED(bus1,...), Can_Send(1,...), the sniffer's bus column, etc.)
+ * and this file routes each to the right silicon.
+ *
+ * If the loom is ever cross-terminated again (buses swapped relative to the
+ * logical numbering), swap these two lines: BUS1_HANDLE -> hfdcan2 and
+ * BUS2_HANDLE -> hfdcan1. Nothing else in the codebase changes. */
+#define BUS1_HANDLE  hfdcan1   /* logical bus 1  (can1_messages.def) */
+#define BUS2_HANDLE  hfdcan2   /* logical bus 2  (can2_messages.def) */
 
 /* Diagnostics, watchable in the debugger (declared extern in can.h). */
 can_stats_t g_can_stats = {0};
@@ -126,8 +144,8 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
     /* FIFO overflowed: at least one frame was lost before we could drain it.
      * Count the event so it can be watched in the debugger. */
     if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_MESSAGE_LOST) != 0U) {
-        if      (hfdcan->Instance == FDCAN1) { g_can_stats.bus1_rx_lost++; }
-        else if (hfdcan->Instance == FDCAN2) { g_can_stats.bus2_rx_lost++; }
+        if      (hfdcan->Instance == BUS1_HANDLE.Instance) { g_can_stats.bus1_rx_lost++; }
+        else if (hfdcan->Instance == BUS2_HANDLE.Instance) { g_can_stats.bus2_rx_lost++; }
     }
 
     if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) == 0U) {
@@ -144,12 +162,30 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
         if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &hdr, buf) != HAL_OK) {
             break;
         }
-        if (hfdcan->Instance == FDCAN1) {
+        if (hfdcan->Instance == BUS1_HANDLE.Instance) {
             store(s_bus1, k_routes_bus1, &hdr, buf);
-        } else if (hfdcan->Instance == FDCAN2) {
+            CanSniffer_Capture(1u, hdr.Identifier, buf, classic_len(hdr.DataLength));
+        } else if (hfdcan->Instance == BUS2_HANDLE.Instance) {
             store(s_bus2, k_routes_bus2, &hdr, buf);
+            CanSniffer_Capture(2u, hdr.Identifier, buf, classic_len(hdr.DataLength));
         }
     }
+}
+
+/* ---- Tx-complete interrupt ----------------------------------------------- */
+
+/* Fires once the engine has actually put a queued frame on the wire (self-ACK in
+ * loopback, real ACK otherwise). This is the ground truth for "did our TX leave
+ * the chip": if bus2_tx_done stays 0 while Can_Send keeps returning true, the
+ * controller is accepting frames into the FIFO but never transmitting them. */
+void HAL_FDCAN_TxBufferCompleteCallback(FDCAN_HandleTypeDef *hfdcan,
+                                        uint32_t BufferIndexes)
+{
+    /* One callback may flag several completed buffers at once - count each. */
+    uint32_t n = 0u;
+    for (uint32_t m = BufferIndexes; m != 0u; m &= (m - 1u)) { n++; }
+    if      (hfdcan->Instance == BUS1_HANDLE.Instance) { g_can_stats.bus1_tx_done += n; }
+    else if (hfdcan->Instance == BUS2_HANDLE.Instance) { g_can_stats.bus2_tx_done += n; }
 }
 
 /* ---- Public API ---------------------------------------------------------- */
@@ -174,6 +210,15 @@ void Can_Init(void)
         FDCAN_IT_RX_FIFO0_NEW_MESSAGE | FDCAN_IT_RX_FIFO0_MESSAGE_LOST, 0);
     HAL_FDCAN_ActivateNotification(&hfdcan2,
         FDCAN_IT_RX_FIFO0_NEW_MESSAGE | FDCAN_IT_RX_FIFO0_MESSAGE_LOST, 0);
+
+    /* Tx-complete on every Tx FIFO/Queue buffer (0..7): counts frames that the
+     * engine actually finished sending, for the `stats` tx line. Diagnostic only. */
+    HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_TX_COMPLETE,
+        FDCAN_TX_BUFFER0 | FDCAN_TX_BUFFER1 | FDCAN_TX_BUFFER2 | FDCAN_TX_BUFFER3 |
+        FDCAN_TX_BUFFER4 | FDCAN_TX_BUFFER5 | FDCAN_TX_BUFFER6 | FDCAN_TX_BUFFER7);
+    HAL_FDCAN_ActivateNotification(&hfdcan2, FDCAN_IT_TX_COMPLETE,
+        FDCAN_TX_BUFFER0 | FDCAN_TX_BUFFER1 | FDCAN_TX_BUFFER2 | FDCAN_TX_BUFFER3 |
+        FDCAN_TX_BUFFER4 | FDCAN_TX_BUFFER5 | FDCAN_TX_BUFFER6 | FDCAN_TX_BUFFER7);
 }
 
 void Can_Snapshot(can_snapshot_t *out)
@@ -206,9 +251,11 @@ void Can_Snapshot(can_snapshot_t *out)
     HAL_NVIC_EnableIRQ(FDCAN1_IT0_IRQn);
     HAL_NVIC_EnableIRQ(FDCAN2_IT0_IRQn);
 
-    /* Per-bus health (cheap register read; fine outside the critical section). */
-    out->bus1_ok = !bus_off(&hfdcan1);
-    out->bus2_ok = !bus_off(&hfdcan2);
+    /* Per-bus health (cheap register read; fine outside the critical section).
+     * Logical bus -> peripheral via the swap macros so bus1_ok/bus2_ok fed to
+     * the model match the same buses everything else routes to. */
+    out->bus1_ok = !bus_off(&BUS1_HANDLE);
+    out->bus2_ok = !bus_off(&BUS2_HANDLE);
 }
 
 /* ---- Bus-off auto-restart ------------------------------------------------ */
@@ -260,22 +307,44 @@ static void service_bus(FDCAN_HandleTypeDef *h, can_recovery_t *rec,
 
 void Can_Service(void)
 {
-    service_bus(&hfdcan1, &s_rec1, &g_can_stats.bus1_recoveries);
-    service_bus(&hfdcan2, &s_rec2, &g_can_stats.bus2_recoveries);
+    service_bus(&BUS1_HANDLE, &s_rec1, &g_can_stats.bus1_recoveries);
+    service_bus(&BUS2_HANDLE, &s_rec2, &g_can_stats.bus2_recoveries);
 }
 
 void Can_Health(uint8_t bus, can_health_t *out)
 {
-    if (bus == 1u) {
-        out->bus_off          = bus_off(&hfdcan1);
-        out->recovery_gave_up = s_rec1.given_up;
-    } else if (bus == 2u) {
-        out->bus_off          = bus_off(&hfdcan2);
-        out->recovery_gave_up = s_rec2.given_up;
-    } else {
-        out->bus_off          = true;   /* unknown bus: report not usable */
+    FDCAN_HandleTypeDef *h;
+    if      (bus == 1u) { h = &BUS1_HANDLE; out->recovery_gave_up = s_rec1.given_up; }
+    else if (bus == 2u) { h = &BUS2_HANDLE; out->recovery_gave_up = s_rec2.given_up; }
+    else {
+        out->bus_off = true;   /* unknown bus: report not usable */
         out->recovery_gave_up = false;
+        out->error_passive = false;
+        out->tx_err_cnt = 0u;
+        out->last_err_code = 0u;
+        out->tx_pending = 0u;
+        return;
     }
+
+    /* One coherent read of the protocol status + error counters. Pure register
+     * reads, no side effects on the running controller. */
+    FDCAN_ProtocolStatusTypeDef ps;
+    FDCAN_ErrorCountersTypeDef  ec;
+    HAL_FDCAN_GetProtocolStatus(h, &ps);
+    HAL_FDCAN_GetErrorCounters(h, &ec);
+
+    out->bus_off       = (ps.BusOff != 0u);
+    out->error_passive = (ps.ErrorPassive != 0u);
+    out->last_err_code = (uint8_t)ps.LastErrorCode;
+    out->tx_err_cnt    = (uint8_t)ec.TxErrorCnt;
+
+    /* Frames currently queued awaiting transmission = popcount(TXBRP). Valid in
+     * both FIFO and QUEUE mode, unlike GetTxFifoFreeLevel() which reads 0 in QUEUE
+     * mode. 0 = the engine is keeping up; a climbing value = TX backing up. */
+    uint32_t brp = h->Instance->TXBRP;
+    uint8_t  pending = 0u;
+    for (uint32_t m = brp; m != 0u; m &= (m - 1u)) { pending++; }
+    out->tx_pending = pending;
 }
 
 void Can_ClearStats(void)
@@ -284,6 +353,56 @@ void Can_ClearStats(void)
     g_can_stats.bus2_rx_lost    = 0u;
     g_can_stats.bus1_recoveries = 0u;
     g_can_stats.bus2_recoveries = 0u;
+    g_can_stats.bus1_tx_fail    = 0u;
+    g_can_stats.bus2_tx_fail    = 0u;
+    g_can_stats.bus1_tx_done    = 0u;
+    g_can_stats.bus2_tx_done    = 0u;
+}
+
+/* ---- Raw FDCAN register dump (`canreg` console command) ------------------
+ * Reads the TX-critical M_CAN registers straight off both peripherals so we can
+ * SEE why nothing transmits instead of inferring it. Key things to read:
+ *   CCCR.INIT=1        -> stuck in init, TX engine off (should be 0)
+ *   TXBC.TFQS          -> Tx FIFO/Queue size; 0 = no Tx FIFO allocated
+ *   TXBC.TBSA          -> Tx buffer start addr in message RAM (0/garbage = bad layout)
+ *   TXFQS.free/putidx  -> is the queue actually being fed/drained
+ *   TXBRP              -> Tx requests PENDING; bits stuck set = engine never sends them
+ *   PSR.ACT            -> node activity (3 = transmitter); never 3 = never keys TX
+ *   TEST/CCCR.MON      -> confirm loopback (MON=1 & TEST.LBCK=1 while looped) */
+void Can_DumpTx(void)
+{
+    FDCAN_GlobalTypeDef *regs[2] = { BUS1_HANDLE.Instance, BUS2_HANDLE.Instance };
+    char b[192];
+    for (uint8_t i = 0; i < 2u; i++) {
+        FDCAN_GlobalTypeDef *R = regs[i];
+        uint32_t cccr = R->CCCR, psr = R->PSR, txbc = R->TXBC, txfqs = R->TXFQS;
+
+        snprintf(b, sizeof b,
+            "FDCAN%u CCCR %08lX INIT=%lu CCE=%lu MON=%lu DAR=%lu TEST=%lu  TEST %08lX(LBCK=%lu)\r\n",
+            (unsigned)(i + 1u), (unsigned long)cccr,
+            (unsigned long)(cccr & 1u), (unsigned long)((cccr >> 1) & 1u),
+            (unsigned long)((cccr >> 5) & 1u), (unsigned long)((cccr >> 6) & 1u),
+            (unsigned long)((cccr >> 7) & 1u),
+            (unsigned long)R->TEST, (unsigned long)((R->TEST >> 4) & 1u));
+        Console_Out(b);
+
+        snprintf(b, sizeof b,
+            "       PSR %08lX LEC=%lu ACT=%lu EP=%lu BO=%lu  TXBC %08lX TBSA=%04lX TFQS=%lu TFQM=%lu\r\n",
+            (unsigned long)psr, (unsigned long)(psr & 7u),
+            (unsigned long)((psr >> 3) & 3u), (unsigned long)((psr >> 5) & 1u),
+            (unsigned long)((psr >> 7) & 1u),
+            (unsigned long)txbc, (unsigned long)(txbc & 0xFFFCu),
+            (unsigned long)((txbc >> 24) & 0x3Fu), (unsigned long)((txbc >> 30) & 1u));
+        Console_Out(b);
+
+        snprintf(b, sizeof b,
+            "       TXFQS %08lX free=%lu putidx=%lu full=%lu  TXBRP %08lX TXBTO %08lX  IE %08lX ILE %08lX\r\n",
+            (unsigned long)txfqs, (unsigned long)(txfqs & 0x3Fu),
+            (unsigned long)((txfqs >> 16) & 0x1Fu), (unsigned long)((txfqs >> 21) & 1u),
+            (unsigned long)R->TXBRP, (unsigned long)R->TXBTO,
+            (unsigned long)R->IE, (unsigned long)R->ILE);
+        Console_Out(b);
+    }
 }
 
 /* ---- Tx ------------------------------------------------------------------ */
@@ -291,16 +410,17 @@ void Can_ClearStats(void)
 bool Can_Send(uint8_t bus, uint32_t id, const uint8_t *data, uint8_t len)
 {
     FDCAN_HandleTypeDef *h;
-    if      (bus == 1U) { h = &hfdcan1; }
-    else if (bus == 2U) { h = &hfdcan2; }
+    if      (bus == 1U) { h = &BUS1_HANDLE; }
+    else if (bus == 2U) { h = &BUS2_HANDLE; }
     else                { return false; }
 
     if (len > 8U) { len = 8U; }
 
-    if (HAL_FDCAN_GetTxFifoFreeLevel(h) == 0U) {
-        return false;   /* queue full - backpressure; caller decides policy */
-    }
-
+    /* Do NOT gate on HAL_FDCAN_GetTxFifoFreeLevel(): the Tx is configured in QUEUE
+     * mode (TXBC.TFQM=1), where TXFQS.TFFL ("free level") ALWAYS reads 0. That guard
+     * therefore rejected every frame and nothing was ever queued - the root cause of
+     * "the HCU transmits nothing". HAL_FDCAN_AddMessageToTxFifoQ() below checks the
+     * queue-FULL flag (TXFQS.TFQF) itself, which IS valid in FIFO and QUEUE mode. */
     FDCAN_TxHeaderTypeDef tx;
     tx.Identifier          = id;
     tx.IdType              = FDCAN_STANDARD_ID;
@@ -312,5 +432,9 @@ bool Can_Send(uint8_t bus, uint32_t id, const uint8_t *data, uint8_t len)
     tx.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
     tx.MessageMarker       = 0;
 
-    return HAL_FDCAN_AddMessageToTxFifoQ(h, &tx, (uint8_t *)data) == HAL_OK;
+    if (HAL_FDCAN_AddMessageToTxFifoQ(h, &tx, (uint8_t *)data) != HAL_OK) {
+        if (bus == 1U) { g_can_stats.bus1_tx_fail++; } else { g_can_stats.bus2_tx_fail++; }
+        return false;
+    }
+    return true;
 }

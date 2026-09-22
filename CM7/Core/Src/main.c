@@ -29,6 +29,7 @@
 #include "model_bridge.h"
 #include "params.h"
 #include "can.h"
+#include "can_sniffer.h"
 #include "scheduler.h"
 #include "logger.h"
 #include "clock.h"
@@ -182,6 +183,7 @@ while((__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) == RESET) && (timeout-- > 0));
   /* USER CODE BEGIN 2 */
   Params_Init();     /* load saved config from flash, or fall back to defaults */
   Console_Init();
+  CanSniffer_Init(); /* raw all-id bus observer: ready the table before Can_Init enables Rx IRQs */
   Can_Init();
   Model_Init();
   Log_Init();        /* set up the CM4 SD-log ring before the first Model_Step writes to it */
@@ -204,6 +206,7 @@ while((__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) == RESET) && (timeout-- > 0));
 	Can_Service();                   /* bus-off watchdog + rate-limited restart */
 	Clock_Service();                 /* republish RTC datetime to the IPC (~1 Hz, rate-limited) */
 	Telem_Service();                 /* emit a live telemetry frame when due (slack time, not a control tick) */
+	CanSniffer_Service();            /* emit a raw CAN bus snapshot when due (slack time, sniffer stream) */
 
 	if (Sched_StepDue()) {           /* exact 100 Hz tick from TIM6 (see scheduler.h) */
 		Model_Step();
@@ -408,7 +411,7 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Init.AutoRetransmission = DISABLE;
   hfdcan1.Init.TransmitPause = DISABLE;
   hfdcan1.Init.ProtocolException = DISABLE;
-  hfdcan1.Init.NominalPrescaler = 2;
+  hfdcan1.Init.NominalPrescaler = 1;   /* 25 MHz / (1 * (1+21+3)) = 1 Mbit/s (dash/ECU bus = logical bus 1) */
   hfdcan1.Init.NominalSyncJumpWidth = 3;
   hfdcan1.Init.NominalTimeSeg1 = 21;
   hfdcan1.Init.NominalTimeSeg2 = 3;
@@ -759,8 +762,19 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : User_Button_1_Pin User_Button_2_Pin IMU_Int_Pin */
-  GPIO_InitStruct.Pin = User_Button_1_Pin|User_Button_2_Pin|IMU_Int_Pin;
+  /*Configure GPIO pins : User_Button_1_Pin User_Button_2_Pin */
+  /* ACTIVE-LOW buttons: the board pulls each pin UP to +3V3 through a 4.7k
+     (R51/R52) and the switch shorts the pin to GND when pressed. So idle = HIGH,
+     pressed = LOW. Enable the internal pull-up to back up the external one (and
+     define idle-high if a resistor is ever unpopulated). The read is inverted to
+     match, in model_bridge.c. */
+  GPIO_InitStruct.Pin = User_Button_1_Pin|User_Button_2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : IMU_Int_Pin */
+  GPIO_InitStruct.Pin = IMU_Int_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);

@@ -22,9 +22,11 @@
 Params_t g_params;
 
 static const Params_t PARAMS_DEFAULT = {
+#define PARAM_SECTION(label)
 #define PARAM_F32(name, def, lo, hi)  .name = def,
 #define PARAM_I32(name, def, lo, hi)  .name = def,
 #include "params.def"
+#undef PARAM_SECTION
 #undef PARAM_F32
 #undef PARAM_I32
 };
@@ -46,13 +48,39 @@ typedef struct {
 
 static const ParamDesc_t TABLE[] = {
     /*  name (stringized)   type    pointer            lo            hi   */
+#define PARAM_SECTION(label)
 #define PARAM_F32(name, def, lo, hi)  { #name, P_F32, &g_params.name, (float)(lo), (float)(hi) },
 #define PARAM_I32(name, def, lo, hi)  { #name, P_I32, &g_params.name, (float)(lo), (float)(hi) },
 #include "params.def"
+#undef PARAM_SECTION
 #undef PARAM_F32
 #undef PARAM_I32
 };
 #define TABLE_COUNT (sizeof(TABLE) / sizeof(TABLE[0]))
+
+/* ================================================================== */
+/* Layout table: parameters AND their PARAM_SECTION headers, in the    */
+/* order params.def declares them. Presentation only - it feeds `list` */
+/* so the GUI can show the same sections this file reads. It does NOT  */
+/* affect storage, clamping, flash or the layout fingerprint.          */
+/* ================================================================== */
+typedef enum { LE_PARAM, LE_SECTION } layout_kind_t;
+
+typedef struct {
+    layout_kind_t kind;
+    const char   *text;   /* section label (LE_SECTION) or param name (LE_PARAM) */
+} LayoutEntry_t;
+
+static const LayoutEntry_t LAYOUT[] = {
+#define PARAM_SECTION(label)          { LE_SECTION, label },
+#define PARAM_F32(name, def, lo, hi)  { LE_PARAM,   #name },
+#define PARAM_I32(name, def, lo, hi)  { LE_PARAM,   #name },
+#include "params.def"
+#undef PARAM_SECTION
+#undef PARAM_F32
+#undef PARAM_I32
+};
+#define LAYOUT_COUNT (sizeof(LAYOUT) / sizeof(LAYOUT[0]))
 
 /* ================================================================== */
 /* Flash layout                                                       */
@@ -246,6 +274,30 @@ int Params_Describe(uint32_t index, char *name, size_t name_sz,
     if (index >= TABLE_COUNT) return -1;
     snprintf(name, name_sz, "%s", TABLE[index].name);
     format_value(&TABLE[index], value, value_sz);
+    return 0;
+}
+
+uint32_t Params_LayoutCount(void) { return LAYOUT_COUNT; }
+
+int Params_LayoutDescribe(uint32_t index, int *is_section,
+                          char *name, size_t name_sz,
+                          char *value, size_t value_sz)
+{
+    if (index >= LAYOUT_COUNT) return -1;
+    const LayoutEntry_t *e = &LAYOUT[index];
+
+    if (e->kind == LE_SECTION) {
+        if (is_section) *is_section = 1;
+        snprintf(name, name_sz, "%s", e->text);
+        if (value && value_sz) value[0] = '\0';
+        return 0;
+    }
+
+    if (is_section) *is_section = 0;
+    snprintf(name, name_sz, "%s", e->text);
+    const ParamDesc_t *d = find(e->text);      /* value for this param name */
+    if (d) format_value(d, value, value_sz);
+    else if (value && value_sz) value[0] = '\0';
     return 0;
 }
 

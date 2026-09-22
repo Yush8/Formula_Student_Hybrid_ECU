@@ -27,6 +27,7 @@
  *   stats                          trackside system health (loop / CAN / logging)
  *   stats clear                    zero the stats counters (e.g. before a run)
  *   telem [on|off|rate <hz>|list]  live model-signal stream (see telem.h)
+ *   cansniff [on|off|rate|clear|list]  raw CAN bus sniffer (see can_sniffer.h)
  *   ping                           link check -> "pong"
  *
  * The parameter list is GENERATED from params.def, so `list`/`get`/`set` pick

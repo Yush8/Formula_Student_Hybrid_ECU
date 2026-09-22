@@ -92,6 +92,10 @@ typedef struct {
     uint32_t bus2_rx_lost;
     uint32_t bus1_recoveries;   /* bus-off recovery kicks issued */
     uint32_t bus2_recoveries;
+    uint32_t bus1_tx_fail;      /* Can_Send() rejected: tx queue full or HAL add failed */
+    uint32_t bus2_tx_fail;      /* a nonzero, climbing count = frames never leaving the chip */
+    uint32_t bus1_tx_done;      /* frames the TX engine actually FINISHED transmitting */
+    uint32_t bus2_tx_done;      /* stays 0 while sends succeed => engine accepts but never sends */
 } can_stats_t;
 
 extern can_stats_t g_can_stats;
@@ -104,13 +108,34 @@ extern can_stats_t g_can_stats;
  *                             left the bus down (hard wiring/transceiver fault;
  *                             the model is failing safe). Self-clears once the
  *                             bus comes back healthy (see Can_Service).
+ *
+ * TX-path diagnostics (added to localise "RX works, nothing we send appears on
+ * the bus"). Read live from the FDCAN protocol/error registers:
+ *   error_passive true => TEC or REC >= 128. A lone transmitter whose frames go
+ *                         un-ACKed climbs here and PARKS (CAN's ACK-error rule
+ *                         stops it short of bus-off) - the classic signature of a
+ *                         dead TX path (PB6/transceiver) rather than a config bug.
+ *   tx_err_cnt         => TEC. 0 = we are not even attempting / everything ACKs;
+ *                         ~128 & parked = attempting but nobody acknowledges.
+ *   last_err_code      => FDCAN LEC. 3 = ACK error (we transmit but no receiver
+ *                         acknowledges); 0/7 = no recent error (frames not leaving).
+ *   tx_pending         => frames queued awaiting TX (TXBRP popcount). 0 = engine
+ *                         keeping up; a climbing value = TX backing up.
  * bus = 1 or 2; any other value reports the bus as unusable. */
 typedef struct {
-    bool bus_off;
-    bool recovery_gave_up;
+    bool    bus_off;
+    bool    recovery_gave_up;
+    bool    error_passive;      /* TEC/REC >= 128: parked, not ACKed */
+    uint8_t tx_err_cnt;         /* TEC (transmit error counter) */
+    uint8_t last_err_code;      /* FDCAN LEC: 0 none, 3 = ACK error, ... */
+    uint8_t tx_pending;         /* frames queued awaiting TX (TXBRP popcount); 0 = all sent */
 } can_health_t;
 
 void Can_Health(uint8_t bus, can_health_t *out);
+
+/* Dump the TX-critical FDCAN registers for both buses to the console (the
+ * `canreg` command). Read-only; for diagnosing "frames queued but never sent". */
+void Can_DumpTx(void);
 
 /* Zero the diagnostic counters in g_can_stats (for the `stats clear` console
  * command). rx_lost is ISR-written, so a clear can race a single increment - of

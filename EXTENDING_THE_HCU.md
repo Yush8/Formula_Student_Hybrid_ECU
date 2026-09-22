@@ -61,6 +61,21 @@ That one line gives you, automatically:
 - flash save/load (and old flash is auto-rejected when you change the list, so
   you fall back to safe defaults — see "Flash & save" below).
 
+**Grouping (optional):** the Config GUI files parameters under labelled headings.
+The heading comes from the board, so you set it in `params.def` with a one-line
+marker — everything below it (until the next marker) goes under that heading:
+
+```c
+PARAM_SECTION( "Torque Vectoring" )
+PARAM_F32( TV_Gain, 0.0f, 0.0f, 2.0f )   /* appears under "Torque Vectoring" */
+```
+
+Drop your new parameter under the right heading (or add a new `PARAM_SECTION`
+for a new group) and it shows up there in the GUI, in this file's order, with no
+Python edit. A parameter above every marker just lands in an "Other" group.
+Sections are presentation only — they don't touch storage, flash, or the layout
+fingerprint, so re-grouping never invalidates a saved config.
+
 **If you also want the *model* to use the parameter** (most of the time you do):
 1. In Simulink, add a root **Inport** with the **same name** (`kp`), data type
    `single` for `PARAM_F32` or `int32` for `PARAM_I32`. Regenerate the code.
@@ -147,6 +162,31 @@ line: `#T tick=1234 User_LED_1=1 Torque_Scale_Factor=0.8571 APPS=12,0,255,...`.
 
 ---
 
+## 3c. Watch the raw CAN bus (sniffer)
+
+The **CAN Bus** tab is a live sniffer: it shows **every** id the board receives on
+either bus — including ids that are *not* in `can1_messages.def` / `can2_messages.def`
+— with the latest 8 data bytes, a frame counter, a measured message rate and how
+long ago each id was last seen. It self-discovers, so there is **nothing to
+configure**: plug in, press **▶ Start stream**, and the table fills in.
+
+- **Rate** sets how often the whole table is re-sent (1–50 Hz; the data itself is
+  captured on every frame in the Rx interrupt, so the counts are exact regardless).
+- **Clear** forgets every captured id (board + grid) for a fresh start.
+- **Snapshot** dumps the table once without streaming.
+- **Filter** narrows to an id or bus (type e.g. `017` or `2:`).
+
+It is a read-only view — it never transmits CAN and is completely independent of
+the model demux and the telemetry stream. Only standard (11-bit) frames appear,
+because the CAN filter deliberately rejects extended frames (the car uses 11-bit
+ids). Bump `CANSNIFF_MAX_IDS` in `can_sniffer.h` only if `cansniff` reports drops.
+
+By hand in PuTTY: `cansniff on` / `cansniff off`, `cansniff rate 20`,
+`cansniff clear`, `cansniff list`. Each streamed row is one line:
+`#C <bus> <id> <count> <age_ms> <dlc> <data>`, e.g. `#C 2 017 4211 3 8 12AB34CD5678EF90`.
+
+---
+
 ## 4. Add an input or output (a pin or sensor)
 
 1. In Simulink, draw the **Inport** (input) or **Outport** (output), name it, set
@@ -184,17 +224,21 @@ python ConfigGUI.py
   this stationary / in the pit. **Load defaults** resets to the built-in values
   (then Save to keep them) — a factory reset.
 
-The GUI has three tabs:
+The GUI has four tabs:
 - **Live Telemetry** — every signal from `telem_signals.def`, value updating in
   place. Press **▶ Start stream** to watch them update; pick the **Rate** (1–100
   Hz); use the **Filter** box to narrow to the signals you care about. The rows
   auto-discover from the board, so a signal you add to the `.def` just appears.
+- **CAN Bus** — a live sniffer of every raw CAN id on both buses (section 3c),
+  auto-discovered.
 - **Config** — the tunable parameters (section 1), auto-discovered.
 - **Console** — the raw text log and a box to type any command by hand.
 
 Everything the GUI does, you can also type in PuTTY (`list`, `get kp`, `set kp 2`,
 `save`, `defaults`, `time`, `time set 2026-06-14 12:00:00`, `stats`,
-`telem on`/`telem off`/`telem rate 50`/`telem list`, `ping`).
+`telem on`/`telem off`/`telem rate 50`/`telem list`,
+`cansniff on`/`cansniff off`/`cansniff rate 20`/`cansniff clear`/`cansniff list`,
+`ping`).
 
 ---
 

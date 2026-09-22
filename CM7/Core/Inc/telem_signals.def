@@ -70,6 +70,10 @@ TELEM_Y(       Base_Torque_Demand )
 TELEM_Y(       Delta_Torque )
 TELEM_Y(       Set_Axis_State_0_req )
 TELEM_Y(       Set_Axis_State_1_req )
+/* Live control-mode: the model's latched torque(0)/velocity(1) decision. This is
+ * exactly what C uses to pick which setpoint frame to stream, so it's the single
+ * source of truth for "which mode am I actually in". Plottable scalar. */
+TELEM_Y(       Velocity_Mode_Active )
 
 /* ---- Safety / decision diagnostics: the "why", not just the "what" ---------
  * Three internal decision signals promoted to root Outports so you can watch the
@@ -90,6 +94,12 @@ TELEM_Y(       Set_Axis_State_1_req )
  * rename these Outports in Simulink, keep the names below and the GUI's
  * STATE_SIGNAL / SUPERVISOR_STATES in step with the model. */
 TELEM_Y(       State_Enum )
+/* Fault_Code: WHY the supervisor latched ERROR (State_Enum 6), not just THAT it did.
+ * 0 = no fault. The Stateflow chart stamps a reason code on the transition into
+ * Error_State and holds it until the fault is acknowledged (see Reset_Req). The GUI
+ * decodes it (ConfigGUI FAULT_CODES) and appends it to the red ERROR banner.
+ * Live codes today:  20 = BMS zero-limit (DCL & CCL = 0)   40 = pre-charge timeout. */
+TELEM_Y(       Fault_Code )
 TELEM_Y(       APPS_Implausibility )
 TELEM_Y(       BMS_Fault )
 /* Engine sync gate: true only while the ECU reports synced AND its frame is
@@ -97,6 +107,21 @@ TELEM_Y(       BMS_Fault )
  * (State_Enum 4) instead of arming the inverter (DRIVE / 5) - watch it live to
  * see why the e-drive is / isn't arming. */
 TELEM_Y(       Engine_Synced )
+
+/* Decoded ECU "Hybrid" frame (0x627 -> ECU_Misc, see the raw bytes lower down).
+ * The C side only forwards the raw 8 bytes; the split + scaling into these three
+ * named signals is done in Simulink. UNCOMMENT each line ONCE the matching root
+ * Outport exists in the model and you have regenerated Embedded Coder - until then
+ * the field is absent from ExtY and CM7 would fail to compile (same rule as a
+ * CAN_FEED with no inport). Watch them raw via ECU_Misc in the meantime.
+ *   Sync_State      the ECU sync state as a NUMBER (0..3; 3 = synced). This is the
+ *                   value behind Engine_Synced (which is just "== 3 AND fresh").
+ *   Steering_Angle  decoded steering angle [deg] (a 0 placeholder in the model
+ *                   until the steering signal is actually wired - see params.def).
+ *   Brake_Pressure  decoded brake pressure (feeds regen + brake plausibility). */
+/* TELEM_Y(       Sync_State ) */
+/* TELEM_Y(       Steering_Angle ) */
+TELEM_Y(       Brake_Pressure )
 
 /* Decoded BMS + ODrive scalars (the efficiency / power-budget diagnostics).
  * These let you watch DCL/CCL, per-ODrive DC bus V & I live, and - with the
@@ -112,10 +137,18 @@ TELEM_Y(       Pack_Voltage )
 TELEM_Y(       Velocity_0 )
 TELEM_Y(       Velocity_1 )
 TELEM_Y(       APPS_Clean )
+/* Decoded road speed [km/h] - decoded in Simulink from APPS[4..5] (rides in the
+ * APPS frame, no new CAN). Root Outport, Simulink 'single'. */
+TELEM_Y(       Vehicle_Speed )
 TELEM_ARRAY_Y( Torque_Left,        8 )
 TELEM_ARRAY_Y( Torque_Right,       8 )
 TELEM_ARRAY_Y( Set_Axis_State_0,   8 )
 TELEM_ARRAY_Y( Set_Axis_State_1,   8 )
+/* Raw ODrive Set_Controller_Mode payloads (0x00B / 0x02B): bytes 0..3 =
+ * Control_Mode (1=torque, 2=velocity), bytes 4..7 = Input_Mode (1=passthrough,
+ * 2=vel_ramp). Watch these to confirm the mode command actually going out. */
+TELEM_ARRAY_Y( Set_Controller_Mode_0, 8 )
+TELEM_ARRAY_Y( Set_Controller_Mode_1, 8 )
 
 /* ===================== MODEL INPUTS (_U) ============================= *
  * What the model is actually being fed - so you can confirm CAN frames,
@@ -124,6 +157,10 @@ TELEM_U(       bus1_ok )
 TELEM_U(       bus2_ok )
 TELEM_U(       SDC_Monitor )
 TELEM_U(       Start_Button )
+/* Fault-acknowledge request reaching the model: physical reset button (User Button 2)
+ * OR the GUI Clear-Fault button (Error_Reset_GUI), OR'd in model_bridge.c. Watch it to
+ * confirm a press actually lands on the Reset_Req inport. */
+TELEM_U(       Reset_Req )
 TELEM_U(       Drive_Efficiency )
 TELEM_U(       BMS_Margin )
 TELEM_U(       Motor_Torque_Max )
@@ -143,6 +180,11 @@ TELEM_U(       Max_Torque_Split )
  * (_age = UINT32_MAX/4294967295 means "never seen").                   */
 TELEM_ARRAY_U( APPS,                       8 )
 TELEM_U(       APPS_age )
+/* ECU "Hybrid" frame (0x627): the raw 8 bytes carrying Sync State, Steering Angle
+ * and Brake Pressure. Watch these live now; the named/decoded versions light up
+ * once you add the Simulink outports above. */
+TELEM_ARRAY_U( ECU_Misc,                   8 )
+TELEM_U(       ECU_Misc_age )
 TELEM_ARRAY_U( BMS_Limits,                 8 )
 TELEM_U(       BMS_Limits_age )
 TELEM_ARRAY_U( ODrive_0_VI,                8 )

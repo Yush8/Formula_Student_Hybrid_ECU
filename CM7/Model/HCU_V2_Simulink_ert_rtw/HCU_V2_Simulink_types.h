@@ -7,9 +7,9 @@
  *
  * Code generated for Simulink model 'HCU_V2_Simulink'.
  *
- * Model version                  : 1.136
+ * Model version                  : 1.157
  * Simulink Coder version         : 25.2 (R2025b) 28-Jul-2025
- * C/C++ source code generated on : Sun Jul  5 10:07:11 2026
+ * C/C++ source code generated on : Tue Sep 22 15:01:02 2026
  *
  * Target selection: ert.tlc
  * Embedded hardware selection: ARM Compatible->ARM Cortex-M

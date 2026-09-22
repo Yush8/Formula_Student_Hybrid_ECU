@@ -28,11 +28,15 @@
  * or edited flash image can ever move them.
  */
 
-/* The live tunables. Each PARAM_* line in params.def becomes one field. */
+/* The live tunables. Each PARAM_* line in params.def becomes one field.
+ * PARAM_SECTION is a GUI-grouping marker only (see params.def) - it carries no
+ * storage, so every include site defines it away except the layout table. */
 typedef struct {
+#define PARAM_SECTION(label)
 #define PARAM_F32(name, def, lo, hi)  float   name;
 #define PARAM_I32(name, def, lo, hi)  int32_t name;
 #include "params.def"
+#undef PARAM_SECTION
 #undef PARAM_F32
 #undef PARAM_I32
 } Params_t;
@@ -53,6 +57,14 @@ int           Params_Save(void);          /* g_params -> flash; 0 = ok, -1 = fai
 uint32_t      Params_Count(void);
 int           Params_Describe(uint32_t index, char *name, size_t name_sz,
                               char *value, size_t value_sz);              /* 0 ok, -1 bad index */
+
+/* Layout view = the parameters PLUS the PARAM_SECTION headers, in params.def
+ * order. Used by `list` so the GUI can group parameters exactly as this file
+ * reads. Params_LayoutCount() >= Params_Count() (it also counts the headers). */
+uint32_t      Params_LayoutCount(void);
+int           Params_LayoutDescribe(uint32_t index, int *is_section,
+                                    char *name, size_t name_sz,
+                                    char *value, size_t value_sz);        /* 0 ok, -1 bad index */
 int           Params_GetFormatted(const char *name, char *value, size_t value_sz); /* 0 ok, -1 unknown */
 ParamStatus_t Params_SetFromString(const char *name, const char *valstr,
                                     char *applied, size_t applied_sz);

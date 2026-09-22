@@ -7,9 +7,9 @@
  *
  * Code generated for Simulink model 'HCU_V2_Simulink'.
  *
- * Model version                  : 1.136
+ * Model version                  : 1.157
  * Simulink Coder version         : 25.2 (R2025b) 28-Jul-2025
- * C/C++ source code generated on : Sun Jul  5 10:07:11 2026
+ * C/C++ source code generated on : Tue Sep 22 15:01:02 2026
  *
  * Target selection: ert.tlc
  * Embedded hardware selection: ARM Compatible->ARM Cortex-M
@@ -39,46 +39,49 @@
 
 /* Block signals (default storage) */
 typedef struct {
-  real32_T Product_l;                  /* '<S9>/Product' */
-  real32_T Product1_n;                 /* '<S9>/Product1' */
+  real32_T Product_l;                  /* '<S10>/Product' */
+  real32_T Product1_n;                 /* '<S10>/Product1' */
   uint8_T Switch_e;                    /* '<S6>/Switch' */
-  uint8_T VectorConcatenate1[8];       /* '<S9>/Vector Concatenate1' */
-  uint8_T VectorConcatenate[8];        /* '<S9>/Vector Concatenate' */
-  uint8_T VectorConcatenate2[8];       /* '<S6>/Vector Concatenate2' */
-  uint8_T VectorConcatenate1_e[8];     /* '<S8>/Vector Concatenate1' */
-  uint8_T VectorConcatenate_i[8];      /* '<S8>/Vector Concatenate' */
+  uint8_T Switch_el;                   /* '<S7>/Switch' */
+  uint8_T VectorConcatenate2[8];       /* '<S7>/Vector Concatenate2' */
+  uint8_T VectorConcatenate1[8];       /* '<S10>/Vector Concatenate1' */
+  uint8_T VectorConcatenate[8];        /* '<S10>/Vector Concatenate' */
+  uint8_T VectorConcatenate2_m[8];     /* '<S6>/Vector Concatenate2' */
+  uint8_T VectorConcatenate1_e[8];     /* '<S9>/Vector Concatenate1' */
+  uint8_T VectorConcatenate_i[8];      /* '<S9>/Vector Concatenate' */
 } B_HCU_V2_Simulink_T;
 
 /* Block states (default storage) for system '<Root>' */
 typedef struct {
-  real32_T Delay_DSTATE;               /* '<S46>/Delay' */
+  real32_T Delay_DSTATE;               /* '<S47>/Delay' */
   uint16_T temporalCounter_i1;         /* '<S5>/Safety_Supervisor' */
-  boolean_T UnitDelay_DSTATE;          /* '<S47>/Unit Delay' */
+  boolean_T UnitDelay_DSTATE;          /* '<S48>/Unit Delay' */
+  uint8_T Fault_Cause;                 /* '<S5>/Safety_Supervisor' */
   uint8_T is_active_c3_HCU_V2_Simulink;/* '<S5>/Safety_Supervisor' */
   uint8_T is_c3_HCU_V2_Simulink;       /* '<S5>/Safety_Supervisor' */
-  boolean_T Relay_Mode;                /* '<S37>/Relay' */
-  boolean_T icLoad;                    /* '<S46>/Delay' */
+  boolean_T Relay_Mode;                /* '<S38>/Relay' */
+  boolean_T icLoad;                    /* '<S47>/Delay' */
 } DW_HCU_V2_Simulink_T;
 
 /* Constant parameters (default storage) */
 typedef struct {
   /* Computed Parameter: Accel_Shape_tableData
-   * Referenced by: '<S37>/Accel_Shape'
+   * Referenced by: '<S38>/Accel_Shape'
    */
   real32_T Accel_Shape_tableData[7];
 
   /* Computed Parameter: Accel_Shape_bp01Data
-   * Referenced by: '<S37>/Accel_Shape'
+   * Referenced by: '<S38>/Accel_Shape'
    */
   real32_T Accel_Shape_bp01Data[7];
 
   /* Computed Parameter: Regen_Shape_tableData
-   * Referenced by: '<S37>/Regen_Shape'
+   * Referenced by: '<S38>/Regen_Shape'
    */
   real32_T Regen_Shape_tableData[6];
 
   /* Computed Parameter: Regen_Shape_bp01Data
-   * Referenced by: '<S37>/Regen_Shape'
+   * Referenced by: '<S38>/Regen_Shape'
    */
   real32_T Regen_Shape_bp01Data[6];
 } ConstP_HCU_V2_Simulink_T;
@@ -89,7 +92,7 @@ typedef struct {
   boolean_T bus2_ok;                   /* '<Root>/bus2_ok' */
   uint8_T APPS[8];                     /* '<Root>/APPS' */
   uint32_T APPS_age;                   /* '<Root>/APPS_age' */
-  uint16_T BMS_Limits[8];              /* '<Root>/BMS_Limits' */
+  uint8_T BMS_Limits[8];               /* '<Root>/BMS_Limits' */
   uint32_T BMS_Limits_age;             /* '<Root>/BMS_Limits_age' */
   uint8_T ODrive_0_VI[8];              /* '<Root>/ODrive_0_VI' */
   uint8_T ODrive_1_VI[8];              /* '<Root>/ODrive_1_VI' */
@@ -110,8 +113,8 @@ typedef struct {
   real32_T Drive_Efficiency;           /* '<Root>/Drive_Efficiency' */
   real32_T BMS_Margin;                 /* '<Root>/BMS_Margin' */
   real32_T Motor_Torque_Max;           /* '<Root>/Motor_Torque_Max' */
-  uint8_T Left_Direction;              /* '<Root>/Left_Direction' */
-  uint8_T Right_Direction;             /* '<Root>/Right_Direction' */
+  int8_T Left_Direction;               /* '<Root>/Left_Direction' */
+  int8_T Right_Direction;              /* '<Root>/Right_Direction' */
   real32_T Regen_Efficiency;           /* '<Root>/Regen_Efficiency' */
   real32_T Motor_Regen_Max;            /* '<Root>/Motor_Regen_Max' */
   real32_T Regen_Cutoff_Speed;         /* '<Root>/Regen_Cutoff_Speed' */
@@ -124,9 +127,12 @@ typedef struct {
   real32_T Vel_Scale;                  /* '<Root>/Vel_Scale' */
   real32_T Torque_Rate_Up;             /* '<Root>/Torque_Rate_Up' */
   real32_T Torque_Rate_Down;           /* '<Root>/Torque_Rate_Down' */
-  real32_T Bench_Engine_Off;           /* '<Root>/Bench_Engine_Off' */
+  boolean_T Bench_Engine_Off;          /* '<Root>/Bench_Engine_Off' */
   boolean_T Start_Button_GUI;          /* '<Root>/Start_Button_GUI' */
   real_T Bench_Speed_Bypass;           /* '<Root>/Bench_Speed_Bypass' */
+  real_T Reset_Req;                    /* '<Root>/Reset_Req' */
+  boolean_T Bench_Velocity_Mode;       /* '<Root>/Bench_Velocity_Mode' */
+  real32_T Brake_Zero_Offset;          /* '<Root>/Brake_Zero_Offset' */
 } ExtU_HCU_V2_Simulink_T;
 
 /* External outputs (root outports fed by signals with default storage) */
@@ -165,6 +171,16 @@ typedef struct {
   boolean_T Engine_Synced;             /* '<Root>/Engine_Synced' */
   uint8_T Velocity_Left[8];            /* '<Root>/Velocity_Left' */
   uint8_T Velocity_Right[8];           /* '<Root>/Velocity_Right' */
+  real32_T Vehicle_Speed;              /* '<Root>/Vehicle_Speed' */
+  real32_T Brake_Pressure;             /* '<Root>/Brake_Pressure' */
+  real32_T Steering_Angle;             /* '<Root>/Steering_Angle' */
+  real32_T Sync_State;                 /* '<Root>/Sync_State' */
+  uint8_T Fault_Code;                  /* '<Root>/Fault_Code' */
+  boolean_T Velocity_Mode_Active;      /* '<Root>/Velocity_Mode_Active' */
+  uint8_T Set_Controller_Mode_0[8];    /* '<Root>/Set_Controller_Mode_0' */
+  uint8_T Set_Controller_Mode_1[8];    /* '<Root>/Set_Controller_Mode_1' */
+  boolean_T Set_Controller_Mode_0_req; /* '<Root>/Set_Controller_Mode_0_req' */
+  boolean_T Set_Controller_Mode_1_req; /* '<Root>/Set_Controller_Mode_1_req' */
 } ExtY_HCU_V2_Simulink_T;
 
 /* Real-time Model Data Structure */
@@ -198,26 +214,22 @@ extern RT_MODEL_HCU_V2_Simulink_T *const HCU_V2_Simulink_M;
 /*-
  * These blocks were eliminated from the model due to optimizations:
  *
- * Block '<S46>/FixPt Data Type Duplicate' : Unused code path elimination
- * Block '<S48>/Data Type Duplicate' : Unused code path elimination
- * Block '<S48>/Data Type Propagation' : Unused code path elimination
- * Block '<S54>/Data Type Duplicate' : Unused code path elimination
- * Block '<S54>/Data Type Propagation' : Unused code path elimination
+ * Block '<S47>/FixPt Data Type Duplicate' : Unused code path elimination
+ * Block '<S49>/Data Type Duplicate' : Unused code path elimination
+ * Block '<S49>/Data Type Propagation' : Unused code path elimination
+ * Block '<S55>/Data Type Duplicate' : Unused code path elimination
+ * Block '<S55>/Data Type Propagation' : Unused code path elimination
  * Block '<S2>/Gain' : Eliminated nontunable gain of 1
- * Block '<S3>/Data Type Conversion' : Eliminate redundant data type conversion
- * Block '<S3>/Data Type Conversion1' : Eliminate redundant data type conversion
- * Block '<S3>/Data Type Conversion10' : Eliminate redundant data type conversion
  * Block '<S3>/Data Type Conversion11' : Eliminate redundant data type conversion
  * Block '<S3>/Data Type Conversion2' : Eliminate redundant data type conversion
- * Block '<S3>/Data Type Conversion3' : Eliminate redundant data type conversion
- * Block '<S3>/Data Type Conversion6' : Eliminate redundant data type conversion
  * Block '<S3>/Data Type Conversion7' : Eliminate redundant data type conversion
- * Block '<S3>/Data Type Conversion8' : Eliminate redundant data type conversion
  * Block '<S3>/Gain' : Eliminated nontunable gain of 1
  * Block '<S3>/Gain1' : Eliminated nontunable gain of 1
- * Block '<S46>/Zero-Order Hold' : Eliminated since input and output rates are identical
- * Block '<S55>/Data Type Conversion' : Eliminate redundant data type conversion
+ * Block '<S47>/Zero-Order Hold' : Eliminated since input and output rates are identical
  * Block '<S56>/Data Type Conversion' : Eliminate redundant data type conversion
+ * Block '<S57>/Data Type Conversion' : Eliminate redundant data type conversion
+ * Block '<S60>/Data Type Conversion' : Eliminate redundant data type conversion
+ * Block '<S61>/Data Type Conversion' : Eliminate redundant data type conversion
  */
 
 /*-
@@ -241,60 +253,65 @@ extern RT_MODEL_HCU_V2_Simulink_T *const HCU_V2_Simulink_M;
  * '<S4>'   : 'HCU_V2_Simulink/Encoder_Velocity_Decode'
  * '<S5>'   : 'HCU_V2_Simulink/Logic'
  * '<S6>'   : 'HCU_V2_Simulink/ODrive_Axis_Control'
- * '<S7>'   : 'HCU_V2_Simulink/ODrive_VI_Decode'
- * '<S8>'   : 'HCU_V2_Simulink/Torque_Pack'
- * '<S9>'   : 'HCU_V2_Simulink/Velocity_Pack'
- * '<S10>'  : 'HCU_V2_Simulink/APPS_Decode/Bit Shift'
- * '<S11>'  : 'HCU_V2_Simulink/APPS_Decode/Bit Shift1'
- * '<S12>'  : 'HCU_V2_Simulink/APPS_Decode/Bit Shift2'
- * '<S13>'  : 'HCU_V2_Simulink/APPS_Decode/Compare To Constant'
- * '<S14>'  : 'HCU_V2_Simulink/APPS_Decode/Bit Shift/bit_shift'
- * '<S15>'  : 'HCU_V2_Simulink/APPS_Decode/Bit Shift1/bit_shift'
- * '<S16>'  : 'HCU_V2_Simulink/APPS_Decode/Bit Shift2/bit_shift'
- * '<S17>'  : 'HCU_V2_Simulink/APPS_Decode1/Bit Shift'
- * '<S18>'  : 'HCU_V2_Simulink/APPS_Decode1/Bit Shift1'
- * '<S19>'  : 'HCU_V2_Simulink/APPS_Decode1/Bit Shift2'
- * '<S20>'  : 'HCU_V2_Simulink/APPS_Decode1/Compare To Constant'
- * '<S21>'  : 'HCU_V2_Simulink/APPS_Decode1/Bit Shift/bit_shift'
- * '<S22>'  : 'HCU_V2_Simulink/APPS_Decode1/Bit Shift1/bit_shift'
- * '<S23>'  : 'HCU_V2_Simulink/APPS_Decode1/Bit Shift2/bit_shift'
- * '<S24>'  : 'HCU_V2_Simulink/BMS_Limits_Decode/Bit Shift'
- * '<S25>'  : 'HCU_V2_Simulink/BMS_Limits_Decode/Bit Shift1'
- * '<S26>'  : 'HCU_V2_Simulink/BMS_Limits_Decode/Bit Shift2'
- * '<S27>'  : 'HCU_V2_Simulink/BMS_Limits_Decode/Compare To Constant'
- * '<S28>'  : 'HCU_V2_Simulink/BMS_Limits_Decode/Bit Shift/bit_shift'
- * '<S29>'  : 'HCU_V2_Simulink/BMS_Limits_Decode/Bit Shift1/bit_shift'
- * '<S30>'  : 'HCU_V2_Simulink/BMS_Limits_Decode/Bit Shift2/bit_shift'
- * '<S31>'  : 'HCU_V2_Simulink/Encoder_Velocity_Decode/Compare To Constant'
- * '<S32>'  : 'HCU_V2_Simulink/Encoder_Velocity_Decode/Compare To Constant1'
- * '<S33>'  : 'HCU_V2_Simulink/Encoder_Velocity_Decode/MATLAB Function'
- * '<S34>'  : 'HCU_V2_Simulink/Encoder_Velocity_Decode/MATLAB Function1'
- * '<S35>'  : 'HCU_V2_Simulink/Logic/APPS_Processing'
- * '<S36>'  : 'HCU_V2_Simulink/Logic/BMS_Fault_Processing'
- * '<S37>'  : 'HCU_V2_Simulink/Logic/Base_Torque_Calculator'
- * '<S38>'  : 'HCU_V2_Simulink/Logic/Compare To Constant'
- * '<S39>'  : 'HCU_V2_Simulink/Logic/Safety_Supervisor'
- * '<S40>'  : 'HCU_V2_Simulink/Logic/Torque_Power_Limiter'
- * '<S41>'  : 'HCU_V2_Simulink/Logic/Torque_Vectoring'
- * '<S42>'  : 'HCU_V2_Simulink/Logic/APPS_Processing/Compare To Constant'
- * '<S43>'  : 'HCU_V2_Simulink/Logic/BMS_Fault_Processing/Compare To Constant'
- * '<S44>'  : 'HCU_V2_Simulink/Logic/BMS_Fault_Processing/Compare To Constant1'
- * '<S45>'  : 'HCU_V2_Simulink/Logic/Base_Torque_Calculator/Compare To Zero'
- * '<S46>'  : 'HCU_V2_Simulink/Logic/Base_Torque_Calculator/Rate Limiter Dynamic'
- * '<S47>'  : 'HCU_V2_Simulink/Logic/Base_Torque_Calculator/Virtual_BSPD'
- * '<S48>'  : 'HCU_V2_Simulink/Logic/Base_Torque_Calculator/Rate Limiter Dynamic/Saturation Dynamic'
- * '<S49>'  : 'HCU_V2_Simulink/Logic/Base_Torque_Calculator/Virtual_BSPD/Compare To Constant'
- * '<S50>'  : 'HCU_V2_Simulink/Logic/Base_Torque_Calculator/Virtual_BSPD/Compare To Constant1'
- * '<S51>'  : 'HCU_V2_Simulink/Logic/Base_Torque_Calculator/Virtual_BSPD/Compare To Constant2'
- * '<S52>'  : 'HCU_V2_Simulink/Logic/Torque_Vectoring/Compare To Zero'
- * '<S53>'  : 'HCU_V2_Simulink/Logic/Torque_Vectoring/Dead Zone Dynamic'
- * '<S54>'  : 'HCU_V2_Simulink/Logic/Torque_Vectoring/Saturation Dynamic'
- * '<S55>'  : 'HCU_V2_Simulink/ODrive_Axis_Control/Subsystem1'
- * '<S56>'  : 'HCU_V2_Simulink/ODrive_Axis_Control/Subsystem2'
- * '<S57>'  : 'HCU_V2_Simulink/ODrive_VI_Decode/Compare To Constant'
- * '<S58>'  : 'HCU_V2_Simulink/ODrive_VI_Decode/Compare To Constant1'
- * '<S59>'  : 'HCU_V2_Simulink/ODrive_VI_Decode/MATLAB Function'
- * '<S60>'  : 'HCU_V2_Simulink/ODrive_VI_Decode/MATLAB Function1'
+ * '<S7>'   : 'HCU_V2_Simulink/ODrive_Control_Mode'
+ * '<S8>'   : 'HCU_V2_Simulink/ODrive_VI_Decode'
+ * '<S9>'   : 'HCU_V2_Simulink/Torque_Pack'
+ * '<S10>'  : 'HCU_V2_Simulink/Velocity_Pack'
+ * '<S11>'  : 'HCU_V2_Simulink/APPS_Decode/Bit Shift'
+ * '<S12>'  : 'HCU_V2_Simulink/APPS_Decode/Bit Shift1'
+ * '<S13>'  : 'HCU_V2_Simulink/APPS_Decode/Bit Shift2'
+ * '<S14>'  : 'HCU_V2_Simulink/APPS_Decode/Compare To Constant'
+ * '<S15>'  : 'HCU_V2_Simulink/APPS_Decode/Bit Shift/bit_shift'
+ * '<S16>'  : 'HCU_V2_Simulink/APPS_Decode/Bit Shift1/bit_shift'
+ * '<S17>'  : 'HCU_V2_Simulink/APPS_Decode/Bit Shift2/bit_shift'
+ * '<S18>'  : 'HCU_V2_Simulink/APPS_Decode1/Bit Shift'
+ * '<S19>'  : 'HCU_V2_Simulink/APPS_Decode1/Bit Shift1'
+ * '<S20>'  : 'HCU_V2_Simulink/APPS_Decode1/Bit Shift2'
+ * '<S21>'  : 'HCU_V2_Simulink/APPS_Decode1/Compare To Constant'
+ * '<S22>'  : 'HCU_V2_Simulink/APPS_Decode1/Bit Shift/bit_shift'
+ * '<S23>'  : 'HCU_V2_Simulink/APPS_Decode1/Bit Shift1/bit_shift'
+ * '<S24>'  : 'HCU_V2_Simulink/APPS_Decode1/Bit Shift2/bit_shift'
+ * '<S25>'  : 'HCU_V2_Simulink/BMS_Limits_Decode/Bit Shift'
+ * '<S26>'  : 'HCU_V2_Simulink/BMS_Limits_Decode/Bit Shift1'
+ * '<S27>'  : 'HCU_V2_Simulink/BMS_Limits_Decode/Bit Shift2'
+ * '<S28>'  : 'HCU_V2_Simulink/BMS_Limits_Decode/Compare To Constant'
+ * '<S29>'  : 'HCU_V2_Simulink/BMS_Limits_Decode/Bit Shift/bit_shift'
+ * '<S30>'  : 'HCU_V2_Simulink/BMS_Limits_Decode/Bit Shift1/bit_shift'
+ * '<S31>'  : 'HCU_V2_Simulink/BMS_Limits_Decode/Bit Shift2/bit_shift'
+ * '<S32>'  : 'HCU_V2_Simulink/Encoder_Velocity_Decode/Compare To Constant'
+ * '<S33>'  : 'HCU_V2_Simulink/Encoder_Velocity_Decode/Compare To Constant1'
+ * '<S34>'  : 'HCU_V2_Simulink/Encoder_Velocity_Decode/MATLAB Function'
+ * '<S35>'  : 'HCU_V2_Simulink/Encoder_Velocity_Decode/MATLAB Function1'
+ * '<S36>'  : 'HCU_V2_Simulink/Logic/APPS_Processing'
+ * '<S37>'  : 'HCU_V2_Simulink/Logic/BMS_Fault_Processing'
+ * '<S38>'  : 'HCU_V2_Simulink/Logic/Base_Torque_Calculator'
+ * '<S39>'  : 'HCU_V2_Simulink/Logic/Compare To Constant'
+ * '<S40>'  : 'HCU_V2_Simulink/Logic/Safety_Supervisor'
+ * '<S41>'  : 'HCU_V2_Simulink/Logic/Torque_Power_Limiter'
+ * '<S42>'  : 'HCU_V2_Simulink/Logic/Torque_Vectoring'
+ * '<S43>'  : 'HCU_V2_Simulink/Logic/APPS_Processing/Compare To Constant'
+ * '<S44>'  : 'HCU_V2_Simulink/Logic/BMS_Fault_Processing/Compare To Constant'
+ * '<S45>'  : 'HCU_V2_Simulink/Logic/BMS_Fault_Processing/Compare To Constant1'
+ * '<S46>'  : 'HCU_V2_Simulink/Logic/Base_Torque_Calculator/Compare To Zero'
+ * '<S47>'  : 'HCU_V2_Simulink/Logic/Base_Torque_Calculator/Rate Limiter Dynamic'
+ * '<S48>'  : 'HCU_V2_Simulink/Logic/Base_Torque_Calculator/Virtual_BSPD'
+ * '<S49>'  : 'HCU_V2_Simulink/Logic/Base_Torque_Calculator/Rate Limiter Dynamic/Saturation Dynamic'
+ * '<S50>'  : 'HCU_V2_Simulink/Logic/Base_Torque_Calculator/Virtual_BSPD/Compare To Constant'
+ * '<S51>'  : 'HCU_V2_Simulink/Logic/Base_Torque_Calculator/Virtual_BSPD/Compare To Constant1'
+ * '<S52>'  : 'HCU_V2_Simulink/Logic/Base_Torque_Calculator/Virtual_BSPD/Compare To Constant2'
+ * '<S53>'  : 'HCU_V2_Simulink/Logic/Torque_Vectoring/Compare To Zero'
+ * '<S54>'  : 'HCU_V2_Simulink/Logic/Torque_Vectoring/Dead Zone Dynamic'
+ * '<S55>'  : 'HCU_V2_Simulink/Logic/Torque_Vectoring/Saturation Dynamic'
+ * '<S56>'  : 'HCU_V2_Simulink/ODrive_Axis_Control/Subsystem1'
+ * '<S57>'  : 'HCU_V2_Simulink/ODrive_Axis_Control/Subsystem2'
+ * '<S58>'  : 'HCU_V2_Simulink/ODrive_Control_Mode/Compare To Constant'
+ * '<S59>'  : 'HCU_V2_Simulink/ODrive_Control_Mode/Compare To Constant1'
+ * '<S60>'  : 'HCU_V2_Simulink/ODrive_Control_Mode/Subsystem1'
+ * '<S61>'  : 'HCU_V2_Simulink/ODrive_Control_Mode/Subsystem2'
+ * '<S62>'  : 'HCU_V2_Simulink/ODrive_VI_Decode/Compare To Constant'
+ * '<S63>'  : 'HCU_V2_Simulink/ODrive_VI_Decode/Compare To Constant1'
+ * '<S64>'  : 'HCU_V2_Simulink/ODrive_VI_Decode/MATLAB Function'
+ * '<S65>'  : 'HCU_V2_Simulink/ODrive_VI_Decode/MATLAB Function1'
  */
 #endif                                 /* HCU_V2_Simulink_h_ */
 

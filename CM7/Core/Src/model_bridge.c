@@ -111,6 +111,43 @@
  * Bench_Speed_Bypass (speed gate) = 1. */
 #define SPEED_GATE_FEED_READY   1
 
+/* ---- Bench velocity CONTROL-MODE switch over CAN (Simulink-guarded) ---------
+ * Switches the ODrives between TORQUE_CONTROL (race) and VELOCITY_CONTROL (a
+ * jacked, wheels-off spin test) over CAN - no USB / odrivetool per inverter. The
+ * model owns it: the Bench_Velocity_Mode param feeds a boolean root Inport; the
+ * model emits the ODrive Set_Controller_Mode payload (Set_Controller_Mode_0/1 +
+ * _req, asserted ONLY while that axis is IDLE, so control_mode is never rewritten
+ * on a live axis) plus a Velocity_Mode_Active flag that selects which setpoint
+ * frame C streams. This references those model ports, which DO NOT EXIST until you
+ * add them and regenerate - with this at 0 the firmware still links and streams
+ * TORQUE only (the race-safe default). When you have:
+ *     1. added the boolean root Inport  Bench_Velocity_Mode
+ *     2. added the root Outports  Set_Controller_Mode_0 / _1 (uint8, width 8),
+ *        Set_Controller_Mode_0_req / _1_req (boolean), Velocity_Mode_Active (bool)
+ *     3. regenerated Embedded Coder to CM7\Model,
+ * flip this to 1. ALSO set each ODrive's SAVED control_mode = TORQUE_CONTROL so a
+ * power-cycle always reverts to the race-safe mode. */
+#define VEL_MODE_FEED_READY   1
+
+/* ---- Fault-acknowledge / Error-state exit feed (Simulink-guarded) -----------
+ * The Safety_Supervisor's Error_State is a LATCH - once a confirmed fault puts the
+ * chart there, it stays until a deliberate reset, so you don't have to power-cycle
+ * the car to clear a fault. The model exposes a single boolean root Inport `Reset_Req`,
+ * gated in the chart by `Reset_Req && !BMS_Fault`: it ACKNOWLEDGES a fault that has
+ * already cleared and drops the chart to HV_OFF (never straight to DRIVE - the full
+ * brake+start re-sequence still runs), and it can never suppress a still-active fault.
+ *
+ * We OR two request sources into that one inport below: the physical reset button
+ * (User Button 2, PD13) and the GUI Clear-Fault button (the Error_Reset_GUI param).
+ * GUARDED exactly like the blocks above: the feed references
+ * HCU_V2_Simulink_U.Reset_Req, which only exists once the model has that inport - set
+ * this back to 0 if you ever revert the model and CM7 will still link.
+ *
+ * NOTE: this only clears the MODEL's Error latch. A controller FREEZE is latched
+ * separately by the independent AIR fail-safe (air_safety.c) and is cleared by
+ * `safety reset`; the GUI Clear-Fault button issues both so one press covers either. */
+#define RESET_FEED_READY   1
+
 /* CAN_FEED: copy one demuxed CAN message into the model inbox in a single line.
  *
  *     CAN_FEED( bus1 , CAN1_TEST , test );
@@ -205,7 +242,9 @@ void Model_Step(void)
 	HCU_V2_Simulink_U.bus2_ok = can.bus2_ok;
 
 	HCU_V2_Simulink_U.SDC_Monitor = (HAL_GPIO_ReadPin(SDC_Monitor_GPIO_Port, SDC_Monitor_Pin) == GPIO_PIN_SET);
-	HCU_V2_Simulink_U.Start_Button = (HAL_GPIO_ReadPin(User_Button_1_GPIO_Port, User_Button_1_Pin) == GPIO_PIN_SET);
+	/* ACTIVE-LOW: R51 pulls PD12 up to +3V3; the button shorts it to GND when
+	 * pressed. So GPIO_PIN_RESET (LOW) = pressed, GPIO_PIN_SET (HIGH) = idle. */
+	HCU_V2_Simulink_U.Start_Button = (HAL_GPIO_ReadPin(User_Button_1_GPIO_Port, User_Button_1_Pin) == GPIO_PIN_RESET);
 
 	/* GUI / console START request: the SAME "start", but from the laptop. It
 	 * arrives as a tunable (the GUI START button - and `set Start_Button_GUI 1` -
@@ -219,6 +258,21 @@ void Model_Step(void)
 	 * START_GUI_FEED_READY at the top of this file. */
 #if START_GUI_FEED_READY
 	MODEL_PARAM(Start_Button_GUI);
+#endif
+
+	/* Fault-acknowledge / Error-state exit -> the model's single `Reset_Req` inport.
+	 * Two sources OR'd here: the physical reset button (User Button 2, PD13) and the
+	 * GUI Clear-Fault button (Error_Reset_GUI, a momentary-pulsed param). Kept next to
+	 * the start inputs since it is the same "driver request" shape. It can only REQUEST
+	 * the exit; the chart still requires the fault to be gone (Reset_Req && !BMS_Fault)
+	 * before it leaves Error, and it lands in HV_OFF. ACTIVE-LOW button, same wiring as
+	 * the start button (R-pull-up to +3V3, pressed shorts to GND); if User Button 2 is
+	 * NOT active-low, swap GPIO_PIN_RESET for GPIO_PIN_SET. Compiled out until the model
+	 * has the inport - see RESET_FEED_READY at the top of this file. */
+#if RESET_FEED_READY
+	HCU_V2_Simulink_U.Reset_Req =
+	    (HAL_GPIO_ReadPin(User_Button_2_GPIO_Port, User_Button_2_Pin) == GPIO_PIN_RESET)
+	    || (g_params.Error_Reset_GUI != 0);
 #endif
 
 	/* ----- feed tunable parameters to the model (one line each) -----------
@@ -255,6 +309,14 @@ void Model_Step(void)
     MODEL_PARAM(Motor_Regen_Max);
     MODEL_PARAM(Regen_Cutoff_Speed);
 
+    /* Brake-pressure zero offset -> model. Subtracted from Brake_Pressure before
+     * the Regen_Shape lookup (then clamped >=0) so the sensor's resting reading
+     * decodes as 0 regen - otherwise a ~3-count rest offset lands in the regen
+     * branch and silently overrides the accelerator. The analog of Steering_Centre
+     * for the brake. Only touches the regen curve; the FSAE brake-plausibility and
+     * brake-flag checks still read raw Brake_Pressure. See params.def. */
+    MODEL_PARAM(Brake_Zero_Offset);
+
     /* Torque-vectoring tunables -> model (front-axle steering split; Option A).
      * Same convention: each name matches a params.def line + a Simulink Inport.
      * TV_Gain default 0 = vectoring inert until deliberately tuned up. */
@@ -265,8 +327,18 @@ void Model_Step(void)
 
     /* Bench VELOCITY-test scaling -> model. Turns the final torque request into a
      * velocity setpoint for wheels-off spin tests (ODrive switched to
-     * VELOCITY_CONTROL over USB). Default 0 = feature inert. See params.def. */
+     * VELOCITY_CONTROL - see Bench_Velocity_Mode). Default 0 = feature inert.
+     * See params.def. */
     MODEL_PARAM(Vel_Scale);
+
+    /* Bench VELOCITY control-mode select -> model. Boolean; 0 = torque control
+     * (race), 1 = velocity control (wheels-off bench). The model turns this into
+     * the ODrive Set_Controller_Mode frame streamed over CAN (see dispatch) AND
+     * into Velocity_Mode_Active, which picks which setpoint frame C streams.
+     * Guarded by VEL_MODE_FEED_READY (top of file). */
+#if VEL_MODE_FEED_READY
+    MODEL_PARAM(Bench_Velocity_Mode);
+#endif
 
     /* Bench engine-off drive-enable BYPASS -> model. Boolean; ORs the engine-sync
      * gate open so the Safety_Supervisor can reach DRIVE with the engine off for a
@@ -320,27 +392,55 @@ void Model_Step(void)
      * only veto a close, never force one - so it can never weld the TS live. */
     AirSafety_SetRequest(HCU_V2_Simulink_Y.AIR_Enable, HCU_V2_Simulink_Y.Pre_Charge_Enable);
 
-    /* ---- 3a. continuous setpoints: transmit EVERY tick ------------------
-     * ODrive Set_Input_Torque (cmd 0x0E): node 0 = 0x00E, node 1 = 0x02E.
-     * These MUST repeat every 10 ms - ODrive's rx watchdog disarms the axis if
-     * the stream stops, so spamming is correct here. The model is responsible
-     * for commanding safe (zero) torque under any fault.
+    /* ---- 3a. continuous setpoint: transmit the ACTIVE mode's frame EVERY tick
+     * ODrive's rx watchdog disarms the axis if the stream stops, so the active
+     * frame MUST repeat every 10 ms. The model commands safe (zero) torque under
+     * any fault.
+     *
+     * CRITICAL - send ONE frame, never both. Set_Input_Torque (0x0E) and
+     * Set_Input_Vel (0x0D) BOTH write the ODrive's controller.input_torque:
+     * 0x0D's bytes 4..7 are a torque feed-forward that lands in that same
+     * register. Streaming both every tick makes them fight over it - in
+     * TORQUE_CONTROL the 0x0D feed-forward (0) stamps the real torque request back
+     * to 0 the moment after 0x0E set it. So we stream only the frame that matches
+     * the mode the model has actually commanded the ODrives into.
+     *   Velocity_Mode_Active mirrors the Set_Controller_Mode asserted in 3a-mode:
+     *     0 -> Set_Input_Torque  0x00E / 0x02E, payload = Torque_Left/Right
+     *     1 -> Set_Input_Vel     0x00D / 0x02D, payload = Velocity_Left/Right
+     *          (= final torque request x Vel_Scale, built in Simulink; bytes 4..7
+     *           = torque feed-forward = 0).
      */
-    Can_Send(2, 0x00E, HCU_V2_Simulink_Y.Torque_Left, 8);
+#if VEL_MODE_FEED_READY
+    if (HCU_V2_Simulink_Y.Velocity_Mode_Active) {
+        Can_Send(2, 0x00D, HCU_V2_Simulink_Y.Velocity_Left,  8);
+        Can_Send(2, 0x02D, HCU_V2_Simulink_Y.Velocity_Right, 8);
+    } else {
+        Can_Send(2, 0x00E, HCU_V2_Simulink_Y.Torque_Left,  8);
+        Can_Send(2, 0x02E, HCU_V2_Simulink_Y.Torque_Right, 8);
+    }
+#else
+    /* Velocity mode not wired in: stream TORQUE only (the race-safe default).
+     * Never send the velocity frame here - its torque-FF field would zero
+     * input_torque and cripple torque control. */
+    Can_Send(2, 0x00E, HCU_V2_Simulink_Y.Torque_Left,  8);
     Can_Send(2, 0x02E, HCU_V2_Simulink_Y.Torque_Right, 8);
+#endif
 
-    /* ---- 3a-vel. bench velocity setpoints: transmit EVERY tick --------------
-     * ODrive Set_Input_Vel (cmd 0x0D): node 0 = 0x00D, node 1 = 0x02D. Only has
-     * effect while that ODrive is switched to VELOCITY_CONTROL over USB (a
-     * wheels-off jack test); in the normal TORQUE_CONTROL race config the ODrive
-     * ignores input_vel, so these are harmless to stream in every build. Payload
-     * = float32 velocity [turns/s] in bytes 0..3 (built in Simulink as the final
-     * torque request x Vel_Scale, so torque-vectoring shows up as a wheel-speed
-     * split), bytes 4..7 = torque feed-forward = 0. Same continuous pattern as
-     * the torque stream above - ODrive's rx watchdog wants the repeat.
-     */
-    Can_Send(2, 0x00D, HCU_V2_Simulink_Y.Velocity_Left, 8);
-    Can_Send(2, 0x02D, HCU_V2_Simulink_Y.Velocity_Right, 8);
+    /* ---- 3a-mode. controller-mode select: torque (race) vs velocity (bench) --
+     * ODrive Set_Controller_Mode (cmd 0x0B): node 0 = 0x00B, node 1 = 0x02B.
+     * Payload = Control_Mode (uint32 LE, bytes 0..3) + Input_Mode (bytes 4..7):
+     *   torque   -> 1 (TORQUE_CONTROL)   + 1 (PASSTHROUGH)
+     *   velocity -> 2 (VELOCITY_CONTROL) + 2 (VEL_RAMP)
+     * The model builds the payload from Bench_Velocity_Mode and raises _req ONLY
+     * while that ODrive is IDLE (the pre-arm window) - so the mode is applied
+     * before the arm below and never rewritten on a live axis. Sent BEFORE the
+     * arm so, on the tick an ODrive is about to be armed, the mode leads it. A
+     * dark ODrive (HV not up) just drops the frame; the BMS keeps bus 2 ACKed so
+     * this never bus-offs. */
+#if VEL_MODE_FEED_READY
+    CAN_TX_GATED(2, 0x00B, Set_Controller_Mode_0);
+    CAN_TX_GATED(2, 0x02B, Set_Controller_Mode_1);
+#endif
 
     /* ---- 3b. one-shot / confirmed commands: transmit only when asked -----
      * ODrive Set_Axis_State (cmd 0x07): node 0 = 0x007, node 1 = 0x027.

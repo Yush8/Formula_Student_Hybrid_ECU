@@ -41,6 +41,20 @@
  *  parameter shows up in the console and the GUI automatically.
  *  ---------------------------------------------------------------------------
  *
+ *  TO GROUP PARAMETERS INTO A LABELLED SECTION  (optional, one line):
+ *
+ *           PARAM_SECTION( "My Section Name" )
+ *
+ *     Every parameter BELOW this line (until the next PARAM_SECTION) is filed
+ *     under that heading in the Config GUI, in this file's own order. The board
+ *     reports the section names in `list`, so the GUI groups by them with NO
+ *     Python edit - add a parameter under the right heading (or start a new
+ *     heading) and it just appears there. A parameter that sits above any
+ *     PARAM_SECTION lands in a generic "Other" group (never hidden). Sections
+ *     are presentation only: they do NOT touch storage, flash, or the layout
+ *     fingerprint, so re-grouping never invalidates a saved config.
+ *  ---------------------------------------------------------------------------
+ *
  *  Rules / notes:
  *   - No semicolon, no comma at the end of the line (just like CAN_MSG).
  *   - Each <name> must be unique in this list (it becomes a struct field name),
@@ -54,6 +68,7 @@
  *     to these defaults (safe). Just `save` once after reflashing.
  */
 
+PARAM_SECTION( "Controller / PID" )
 /*           name            default   min       max     */
 PARAM_F32(   kp,             1.500f,   0.0f,     100.0f )
 PARAM_F32(   ki,             0.200f,   0.0f,     100.0f )
@@ -71,6 +86,7 @@ PARAM_I32(   Parameter_1,    0,        0,        1      )
  *   AFTER the limiter, so they are constrained to {-1,0,1} - magnitude can
  *   never exceed 1, so a direction value can never amplify torque past DCL.
  *   Defaults preserve the old behaviour (left negated); confirm your mounting. */
+PARAM_SECTION( "BMS Power Limiter" )
 PARAM_F32(   Drive_Efficiency,  0.850f,  0.0f,   1.0f   )
 PARAM_F32(   BMS_Margin,        0.900f,  0.0f,   1.0f   )
 PARAM_F32(   Motor_Torque_Max,  4.4f,    0.0f,   50.0f  )
@@ -93,9 +109,25 @@ PARAM_I32(   Right_Direction,   1,      -1,      1      )
  * Regen_Cutoff_Speed: motor speed [turns/s] below which regen tapers to 0 (per
  *   wheel) so the motor never reverse-drives a stopped car. Not a rules floor
  *   (LV hybrid); a driveability/anti-rollback taper - keep it low. Tune on dyno. */
+PARAM_SECTION( "Regen / Charge Limiter" )
 PARAM_F32(   Regen_Efficiency,   0.950f,  0.5f,   1.0f   )
 PARAM_F32(   Motor_Regen_Max,    4.4f,    0.0f,   50.0f  )
 PARAM_F32(   Regen_Cutoff_Speed, 2.0f,    0.01f,  100.0f )
+
+/* --- BRAKE zero offset (brake-pressure calibration for the regen curve) ------
+ *     Must match the Simulink Inport name. Subtracted from the decoded
+ *     Brake_Pressure BEFORE the regen-shape lookup (result clamped >= 0), so the
+ *     brake sensor's RESTING reading maps to 0 regen. Without it a small resting
+ *     offset (seen ~3.0 on this car) reads as light braking, drops the model into
+ *     the regen branch and silently OVERRIDES the accelerator - full throttle then
+ *     makes no torque. This is the exact analog of Steering_Centre, for the brake.
+ * DEFAULT 4.0 = just above the observed ~3.0 rest, so it kills the hijack out of
+ *     the box. CALIBRATE: foot OFF the brake, read the live Brake_Pressure, set
+ *     this to that value + ~1. Only affects the regen curve; the FSAE brake-
+ *     plausibility (>=25) and brake-flag (>10) checks still use raw Brake_Pressure,
+ *     so a few counts of offset never weakens those safeties. `save` this one - it
+ *     is a sensor calibration, not a bench bypass. */
+PARAM_F32(   Brake_Zero_Offset,  4.000f,  0.0f,   50.0f  )
 
 /* --- Front-axle TORQUE VECTORING (Option A: steering-proportional split) ----
  *     Must match the Simulink Inport names. Splits the per-wheel base torque
@@ -114,25 +146,42 @@ PARAM_F32(   Regen_Cutoff_Speed, 2.0f,    0.01f,  100.0f )
  *   on-centre noise and small corrections.
  * Max_Torque_Split: hard cap on |delta T| [Nm] - a steering fault can never
  *   command a wider split than this. Keep <= Motor_Torque_Max. */
+PARAM_SECTION( "Torque Vectoring" )
 PARAM_F32(   TV_Gain,            0.000f,  0.0f,    2.0f   )
 PARAM_F32(   Steering_Centre,    0.000f, -30.0f,   30.0f  )
 PARAM_F32(   Steering_Deadzone,  2.000f,  0.0f,    20.0f  )
 PARAM_F32(   Max_Torque_Split,   2.000f,  0.0f,    50.0f  )
 
 /* --- Bench / jack VELOCITY test scaling (wheels-off, no-load spin tests) -----
- *     Must match the Simulink Inport name. ONLY has any effect when the ODrives
- *     are switched to VELOCITY_CONTROL over USB (odrivetool) for a wheels-off
- *     test. The final per-wheel torque request (after torque-vectoring AND all
- *     power/regen limits) is multiplied by this gain and streamed as a
- *     Set_Input_Vel (0x00D / 0x02D) frame [motor turns/s per Nm]. The normal
- *     torque frame keeps streaming; in velocity mode the ODrive just treats it
- *     as a torque feed-forward, so this is safe to leave wired in the race build.
- * DEFAULT 0 = velocity request is always 0, so the feature is INERT until you
- *     deliberately set it for a bench test, and a power-cycle (if unsaved)
+ *     Must match the Simulink Inport name. Sets the MAGNITUDE of the velocity
+ *     setpoint; the MODE is selected by Bench_Velocity_Mode below. The final
+ *     per-wheel torque request (after torque-vectoring AND all power/regen
+ *     limits) is multiplied by this gain and packed into the Set_Input_Vel
+ *     (0x00D / 0x02D) frame [motor turns/s per Nm], which C streams only while
+ *     Bench_Velocity_Mode = 1 (so the torque and velocity frames never fight over
+ *     the ODrive's input_torque register).
+ * DEFAULT 0 = velocity request is always 0, so even in velocity mode the wheels
+ *     stay put until you deliberately raise it; a power-cycle (if unsaved)
  *     returns it to 0. Because you tap AFTER the limiter, the wheels only spin
  *     with HV + BMS live (a jacked whole-car test), not a bare ODrive+PSU bench.
  *     The ODrive's own vel_limit is the real backstop - keep this modest. */
+PARAM_SECTION( "Bench / Test" )
 PARAM_F32(   Vel_Scale,          0.000f,  0.0f,    50.0f  )
+
+/* --- BENCH velocity CONTROL-MODE select (wheels-off, no-load spin test) ------
+ *     Boolean. Must match the Simulink Inport name. 0 = TORQUE control (race);
+ *     1 = VELOCITY control (jacked, wheels-off spin). The model turns this into
+ *     an ODrive Set_Controller_Mode frame (0x00B / 0x02B) streamed over CAN while
+ *     the axis is IDLE - so you switch mode WITHOUT plugging USB into each ODrive
+ *     - and into Velocity_Mode_Active, which makes the firmware stream the
+ *     Set_Input_Vel frame (scaled by Vel_Scale) INSTEAD of Set_Input_Torque.
+ *     Only ever one setpoint frame is on the wire.
+ * DEFAULT 0 = torque control. Set each ODrive's SAVED control_mode to
+ *     TORQUE_CONTROL too, so a power-cycle reverts to race-safe torque.
+ * WARNING: velocity control chases a speed setpoint regardless of load - only
+ *     select it with the car jacked and the wheels off the ground. Do NOT `save`
+ *     it as 1. */
+PARAM_I32(   Bench_Velocity_Mode,  0,       0,       1      )
 
 /* --- BENCH engine-off drive-enable BYPASS (engine-off test day) --------------
  *     Boolean. Must match the Simulink Inport name. The Safety_Supervisor holds
@@ -180,4 +229,19 @@ PARAM_I32(   Bench_Speed_Bypass,  0,       0,       1      )
  *     0), so it behaves like a momentary press and can never stick "on".
  * WARNING: do NOT `save` it as 1 - a saved 1 would boot the car holding the start
  *     button. At rest it is 0, so a normal save captures 0. */
+PARAM_SECTION( "Drive / Start" )
 PARAM_I32(   Start_Button_GUI,   0,       0,       1      )
+
+/* --- GUI / console CLEAR-FAULT button (fault acknowledge / Error-state exit) ---
+ *     Boolean. Mirrors the physical reset button (User Button 2). The GUI "Clear
+ *     Fault" button sends a brief PULSE (1 then back to 0 - like the START button),
+ *     or `set Error_Reset_GUI 1`. In model_bridge.c it is OR'd with User Button 2 and
+ *     fed to the Simulink `Reset_Req` inport. The chart leaves its LATCHED Error_State
+ *     for HV_OFF only when Reset_Req is set AND the underlying fault has cleared - so
+ *     it can ACKNOWLEDGE a fault, never suppress a live one, and it lands in HV_OFF so
+ *     the full brake+start re-sequence is still required (it can never jump to DRIVE).
+ *     The GUI button ALSO issues `safety reset`, clearing the independent AIR fail-safe
+ *     stall latch, so one press recovers whichever of the two latched.
+ * DEFAULT 0 = released. Momentary pulse, so it can never stick "on".
+ * WARNING: do NOT `save` it as 1. At rest it is 0, so a normal save captures 0. */
+PARAM_I32(   Error_Reset_GUI,    0,       0,       1      )

@@ -14,6 +14,7 @@
 #include "can.h"           /* g_can_stats / Can_Health() for `stats` */
 #include "logger.h"        /* g_log_stats / Log_Occupancy() for `stats` */
 #include "telem.h"         /* live model-signal stream for the `telem` command */
+#include "can_sniffer.h"   /* raw CAN bus sniffer for the `cansniff` command */
 #include "air_safety.h"    /* g_air_safety / AirSafety_Reset() for `safety` + the `stats` AIR line */
 #include "main.h"          /* HAL_GetTick() */
 #include <string.h>
@@ -85,6 +86,27 @@ static void Console_Printf(const char *fmt, ...)
  *                   the card/CM4 can't keep up (stalled/full/absent/CM4 down).
  *          WARN  -> ring is backing up (>= half full) but not yet dropping.
  */
+
+/* FDCAN Last Error Code (PSR.LEC) -> short tag for the `stats` tx line. The one
+ * that matters here is "ACK!" (3): the controller transmitted a frame and no
+ * other node acknowledged it - i.e. our TX reached the bus but nobody received
+ * it (dead TX wire, wrong bus, or lone node). "none"/"nc" with TEC 0 means we
+ * are not putting frames on the bus at all. */
+static const char *lec_str(uint8_t lec)
+{
+    switch (lec) {
+        case 0u:  return "none";
+        case 1u:  return "stuff";
+        case 2u:  return "form";
+        case 3u:  return "ACK!";
+        case 4u:  return "bit1";
+        case 5u:  return "bit0";
+        case 6u:  return "crc";
+        case 7u:  return "nc";     /* no change since last read */
+        default:  return "?";
+    }
+}
+
 static void cmd_stats(void)
 {
     /* ---- uptime since boot ---- */
@@ -107,8 +129,10 @@ static void cmd_stats(void)
     for (uint8_t b = 1u; b <= 2u; b++) {
         can_health_t hh;
         Can_Health(b, &hh);
-        uint32_t lost = (b == 1u) ? g_can_stats.bus1_rx_lost    : g_can_stats.bus2_rx_lost;
-        uint32_t rec  = (b == 1u) ? g_can_stats.bus1_recoveries : g_can_stats.bus2_recoveries;
+        uint32_t lost   = (b == 1u) ? g_can_stats.bus1_rx_lost    : g_can_stats.bus2_rx_lost;
+        uint32_t rec    = (b == 1u) ? g_can_stats.bus1_recoveries : g_can_stats.bus2_recoveries;
+        uint32_t txfail = (b == 1u) ? g_can_stats.bus1_tx_fail    : g_can_stats.bus2_tx_fail;
+        uint32_t txdone = (b == 1u) ? g_can_stats.bus1_tx_done    : g_can_stats.bus2_tx_done;
 
         const char *state;
         if      (hh.bus_off && hh.recovery_gave_up) state = "FAIL  bus-off (gave up)    ";
@@ -118,6 +142,20 @@ static void cmd_stats(void)
         Console_Printf(" CAN%u    %srx_lost %lu  recoveries %lu\r\n",
                        (unsigned)b, state,
                        (unsigned long)lost, (unsigned long)rec);
+
+        /* TX-path health: read straight from the FDCAN protocol/error registers.
+         * pend = frames queued awaiting TX (0 = engine keeping up; climbing = backing up)
+         * TEC  = transmit error counter (~128 & parked with EP = un-ACKed TX)
+         * lec  = last protocol error (ACK! = we transmit but nobody acknowledges)
+         * sent = frames the engine actually finished sending (should climb when TXing)
+         * send_fail = Can_Send() rejections (queue full / HAL add failed) */
+        Console_Printf("         tx  pend %u  TEC %u%s  lec %s  sent %lu  send_fail %lu\r\n",
+                       (unsigned)hh.tx_pending,
+                       (unsigned)hh.tx_err_cnt,
+                       hh.error_passive ? " ERR-PASSIVE" : "",
+                       lec_str(hh.last_err_code),
+                       (unsigned long)txdone,
+                       (unsigned long)txfail);
     }
 
     /* ---- SD logging (CM7 producer view of the inter-core ring) ---- */
@@ -175,6 +213,12 @@ static void process_line(char *s)
                       "  telem on|off     start/stop the live model-signal stream\r\n"
                       "  telem rate <hz>  set stream rate (1-100 Hz)\r\n"
                       "  telem list       list the streamed signals + types\r\n"
+                      "  cansniff         CAN sniffer status (all received ids)\r\n"
+                      "  cansniff on|off  start/stop the raw CAN bus stream\r\n"
+                      "  cansniff rate <hz> set snapshot rate (1-50 Hz)\r\n"
+                      "  cansniff clear   forget all captured ids\r\n"
+                      "  cansniff list    dump the captured id table once\r\n"
+                      "  canreg           dump FDCAN TX registers (tx debug)\r\n"
                       "  ping             link check\r\n");
 
     } else if (strcmp(cmd, "stats") == 0) {
@@ -235,14 +279,51 @@ static void process_line(char *s)
             Console_Print("usage: telem | telem on|off | telem rate <hz> | telem list\r\n");
         }
 
+    } else if (strcmp(cmd, "cansniff") == 0) {
+        char *sub = strtok(NULL, " ");
+        if (!sub) {                                  /* "cansniff" -> status */
+            CanSniffer_PrintStatus();
+        } else if (strcmp(sub, "on") == 0) {
+            CanSniffer_SetStreaming(1);
+            CanSniffer_PrintStatus();
+        } else if (strcmp(sub, "off") == 0) {
+            CanSniffer_SetStreaming(0);
+            CanSniffer_PrintStatus();
+        } else if (strcmp(sub, "clear") == 0) {
+            CanSniffer_Clear();
+            Console_Print("cansniff cleared\r\n");
+        } else if (strcmp(sub, "list") == 0) {
+            CanSniffer_PrintTable();
+        } else if (strcmp(sub, "rate") == 0) {
+            char *hz = strtok(NULL, " ");
+            if (!hz) { Console_Print("usage: cansniff rate <hz>\r\n"); return; }
+            CanSniffer_SetRateHz((uint32_t)strtoul(hz, NULL, 10));
+            CanSniffer_PrintStatus();
+        } else {
+            Console_Print("usage: cansniff | cansniff on|off | cansniff rate <hz> | cansniff clear | cansniff list\r\n");
+        }
+
+    } else if (strcmp(cmd, "canreg") == 0) {
+        Can_DumpTx();
+
     } else if (strcmp(cmd, "ping") == 0) {
         Console_Print("pong\r\n");
 
     } else if (strcmp(cmd, "list") == 0) {
-        char name[24], val[24];
-        for (uint32_t i = 0; i < Params_Count(); i++) {
-            Params_Describe(i, name, sizeof(name), val, sizeof(val));
-            Console_Printf("%s = %s\r\n", name, val);
+        /* Walk the layout (params + their PARAM_SECTION headers) so the GUI can
+         * group parameters exactly as params.def reads. Section headers go out as
+         * "# section: <name>" - the '#' keeps them clear of the "name = value"
+         * lines, so anything that only understands values just ignores them. */
+        char name[40], val[24];
+        int is_section;
+        for (uint32_t i = 0; i < Params_LayoutCount(); i++) {
+            if (Params_LayoutDescribe(i, &is_section, name, sizeof(name),
+                                      val, sizeof(val)) != 0)
+                continue;
+            if (is_section)
+                Console_Printf("# section: %s\r\n", name);
+            else
+                Console_Printf("%s = %s\r\n", name, val);
         }
 
     } else if (strcmp(cmd, "get") == 0) {
