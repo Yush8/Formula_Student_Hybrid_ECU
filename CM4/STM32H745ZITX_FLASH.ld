@@ -6,7 +6,7 @@
 **  Author      : STM32CubeIDE
 **
 **  Abstract    : Linker script for STM32H7 series
-**                1024Kbytes FLASH and 288Kbytes RAM
+**                896Kbytes FLASH (bank 2 less the config sector) and 288Kbytes RAM
 **
 **                Set heap size, stack size and stack location according
 **                to application requirements.
@@ -43,7 +43,16 @@ _Min_Stack_Size = 0x400; /* required amount of stack */
 /* Specify the memory areas */
 MEMORY
 {
-FLASH (rx)     : ORIGIN = 0x08100000, LENGTH = 1024K
+/* CM4 owns flash BANK 2 (0x08100000..0x081FFFFF, 8 sectors x 128K).
+ * DELIBERATELY 896K, NOT the full 1024K: the CM7 parameter blob lives in the
+ * LAST sector of this bank (sector 7, 0x081E0000 - see CM7/Core/Src/params.c).
+ * Every `save` erases that sector, so anything CM4 placed there would be wiped.
+ * Stopping the region one sector short makes the linker ERROR if CM4's image
+ * ever grows into the config sector, instead of failing silently in the field.
+ * Current usage is ~39K of 896K, so there is no practical constraint here.
+ * If you ever need the whole bank, MOVE THE CONFIG BLOB FIRST - do not just
+ * raise this number. See docs/STATUS.md section 3.2. */
+FLASH (rx)     : ORIGIN = 0x08100000, LENGTH = 896K
 RAM (xrw)      : ORIGIN = 0x10000000, LENGTH = 288K
 RAM_D3 (xrw)   : ORIGIN = 0x38000000, LENGTH = 64K   /* D3 SRAM4 - shared with CM7 (HCU IPC) */
 }

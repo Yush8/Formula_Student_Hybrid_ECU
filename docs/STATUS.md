@@ -41,16 +41,31 @@ nobody has put a scope or a car on them yet. **Treat as unproven.**
 
 ## 3. Open — safety and correctness first
 
-### 3.1 `SDC_Monitor` (PE2) is NOPULL — fail-dangerous
+### 3.1 `SDC_Monitor` (PE2) bias - reported fixed in hardware, VERIFY ON THE BENCH
 
-**Highest safety value open item.** PE2 has no pull resistor configured, so a
-broken or disconnected sense wire **floats**. With HIGH = healthy, a float can
-read as a false "healthy" in the model.
+The hazard: PE2 is `GPIO_NOPULL` in the `.ioc`, so with no bias a broken or
+disconnected sense wire **floats**. With HIGH = healthy, a float can read as a
+false "healthy" in the model - fail-dangerous.
 
-**Fix:** set PE2 to **pull-down** in CubeMX, so a broken wire reads LOW =
-tripped = safe. This belongs with the pin definition, not in `air_safety.c` (the
-C layer no longer reads the SDC). A one-line bridge reconfiguration is possible
-instead if you want to avoid a regen — say the word.
+**Status (2026-09-22): an external pull-down has been fitted on the board** by
+the hardware side. That is the *better* fix than an internal pull, for two
+reasons: an external resistor is defined during reset and before `MX_GPIO_Init`
+runs, whereas the MCU's internal pull is not; and the internal pull is only
+about 40 kOhm, which is weak against a long, noisy sense line.
+
+`GPIO_NOPULL` in the `.ioc` is therefore now **correct and should be left
+alone** - an internal pull-down on top of an external one is harmless but
+redundant, and changing it would cost a CubeMX regen for nothing.
+
+**Still to do - confirm it on the bench, because this is the one that kills:**
+
+1. Disconnect the SDC sense wire at the connector.
+2. Watch `SDC_Monitor` in the GUI's Live Telemetry (it is already streamed).
+3. It must read **0** (tripped/safe) within a tick, and `SDC_Monitor_LED` must
+   go out. If it reads 1, or wanders between the two, the pull-down is not
+   reaching the pin.
+
+Until that test is done, treat this as unverified rather than closed.
 
 ### 3.2 `Params_Save()` stalls CM4
 
@@ -59,14 +74,19 @@ instead if you want to avoid a regen — say the word.
 stall for the whole erase — the logger freezes and the ring can overflow.
 
 Acceptable today because `save` is a stationary/pit action, but it is real
-coupling. Two cheap mitigations worth doing:
+coupling.
 
-1. **Shrink CM4's linker `FLASH` region** from 1024K to 896K
-   (`CM4/STM32H745ZITX_FLASH.ld`). Today it covers the config sector at
-   `0x081E0000`, so nothing stops CM4 silently growing into the config blob. With
-   896K the linker errors instead.
-2. **Refuse `save` while the model is armed** — `Params_Save()` could return a
-   "refused: not stationary" when `g_air_safety.air_closed` is true.
+**DONE (2026-09-22):** CM4's linker `FLASH` region was shrunk from 1024K to
+**896K** in `CM4/STM32H745ZITX_FLASH.ld`, reserving bank-2 sector 7 (the config
+blob) from the CM4 image. Previously CM4's region covered the config sector, so
+nothing stopped CM4 silently growing into it and being erased by the next
+`save`; now the linker errors instead. CM4 currently uses about 39K of 896K, so
+this costs nothing. **Rebuild and reflash CM4** for it to take effect.
+
+**Still open (optional):** refuse `save` while the model is armed.
+`Params_Save()` could return "refused: not stationary" when
+`g_air_safety.air_closed` is true. Worth doing if anyone ever presses Save with
+the AIRs shut.
 
 ### 3.3 Stack buffers handed to `CDC_Transmit_FS`
 
@@ -144,6 +164,12 @@ dropped for this year's car.
 - Condensed the ~150-line rationale preamble in `model_bridge.c` into short
   pointers, with the full reasoning moved to `CONTROL_STRATEGY.md`.
 - Committed ~2.5 months of previously uncommitted firmware and GUI work.
+- Reserved the config sector from CM4's linker flash region (section 3.2).
+- Confirmed the CAN bit rates from the raw `.ioc` bit timings rather than the
+  CubeMX label: FDCAN1 = 25 MHz / 1 / 25 tq = **1.000 Mbit/s**, FDCAN2 =
+  25 MHz / 2 / 25 tq = **500.0 kbit/s**, both at an 88 % sample point (the
+  closest achievable to the CiA-recommended 87.5 %) with SJW = 3, the legal
+  maximum for this timing.
 
 ## 7. Known drift worth a decision
 
