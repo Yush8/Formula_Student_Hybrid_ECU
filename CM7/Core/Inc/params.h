@@ -55,6 +55,12 @@ void          Params_LoadDefaults(void);  /* g_params = built-in defaults (RAM o
 int           Params_Save(void);          /* g_params -> flash; 0 = ok, -1 = fail       */
 
 uint32_t      Params_Count(void);
+
+/* Fingerprint of the current params.def layout (names + types). The same value
+ * is stored in the saved flash blob and checked on load, so it is also what the
+ * GUI compares a saved tune against: a mismatch means that tune was captured
+ * from a different firmware and must not be applied blind. */
+uint32_t      Params_LayoutId(void);
 int           Params_Describe(uint32_t index, char *name, size_t name_sz,
                               char *value, size_t value_sz);              /* 0 ok, -1 bad index */
 

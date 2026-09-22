@@ -286,6 +286,10 @@ int Params_Describe(uint32_t index, char *name, size_t name_sz,
 
 uint32_t Params_LayoutCount(void) { return LAYOUT_COUNT; }
 
+/* Public view of the layout fingerprint (see params.h) - used by `version` and
+ * `stats json` so the GUI can tell which params.def a board is running. */
+uint32_t Params_LayoutId(void) { return params_layout_id(); }
+
 int Params_LayoutDescribe(uint32_t index, int *is_section,
                           char *name, size_t name_sz,
                           char *value, size_t value_sz)

@@ -1,0 +1,70 @@
+/* =====================================================================
+ *  event_signals.def  --  the DISCRETE signals the event recorder watches.
+ *
+ *  THIS IS THE ONLY FILE YOU EDIT TO ADD SOMETHING TO THE EVENT TIMELINE.
+ *
+ *  The event recorder compares each signal below once per model step and
+ *  emits ONE line the moment it changes:
+ *
+ *        #E <tick> <name> <old> <new>
+ *
+ *  The GUI turns those into the Events timeline ("18.12 s  State_Enum
+ *  5 -> 6"). Because it fires on the STEP, not on the telemetry rate, the
+ *  order of events is exact - you can trust that A really happened before B.
+ *
+ *  One line per signal, exactly like telem_signals.def:
+ *
+ *        EVENT_Y( <OutportName> )     a model OUTPUT  (Y)
+ *        EVENT_U( <InportName>  )     a model INPUT   (U)
+ *
+ *  Use the same macro (Y or U) the signal has in telem_signals.def.
+ *
+ *  >>> ONLY PUT DISCRETE SCALARS HERE <<<
+ *  States, fault codes, enables, flags, direction bits - things that sit
+ *  still and then step. A continuously-moving analogue value (a torque, a
+ *  voltage, a pedal position) would emit an event on EVERY step and drown
+ *  the timeline, so watch those on the Plot tab instead.
+ *
+ *  Arrays (an 8-byte CAN payload, say) are not scalars and will not compile
+ *  here - you will get "pointer value used where a floating-point was
+ *  expected" naming the offending line. Watch those on the CAN Bus tab.
+ *
+ *  Firmware-internal events (the AIR fail-safe latch, CAN bus-off, SD-log
+ *  drops) are NOT listed here - they are not model signals, so events.c
+ *  raises them directly. You never edit C to add a model signal.
+ * ===================================================================== */
+
+/* ---- supervisor state machine ---- */
+EVENT_Y(       State_Enum )
+EVENT_Y(       Fault_Code )
+
+/* ---- HV actuators + drive enable ---- */
+EVENT_Y(       AIR_Enable )
+EVENT_Y(       Pre_Charge_Enable )
+EVENT_Y(       Inverter_Enable )
+
+/* ---- fault / plausibility flags ---- */
+EVENT_Y(       APPS_Implausibility )
+EVENT_Y(       BMS_Fault )
+
+/* ---- engine sync ---- */
+EVENT_Y(       Engine_Synced )
+EVENT_Y(       Sync_State )
+
+/* ---- inverter commanding ----
+ * The _req booleans are the decision. Set_Axis_State_0/1 and
+ * Set_Controller_Mode_0/1 are the raw 8-byte CAN payloads that carry it, so
+ * they are arrays and cannot be watched here - see the ONLY SCALARS rule above.
+ * Watch them on the CAN Bus tab instead. */
+EVENT_Y(       Velocity_Mode_Active )
+EVENT_Y(       Set_Axis_State_0_req )
+EVENT_Y(       Set_Axis_State_1_req )
+
+/* ---- inputs worth a timestamp ---- */
+EVENT_U(       Left_Direction )
+EVENT_U(       Right_Direction )
+EVENT_U(       SDC_Monitor )
+EVENT_U(       Start_Button )
+EVENT_U(       Reset_Req )
+EVENT_U(       bus1_ok )
+EVENT_U(       bus2_ok )

@@ -16,11 +16,17 @@
 #include "telem.h"         /* live model-signal stream for the `telem` command */
 #include "can_sniffer.h"   /* raw CAN bus sniffer for the `cansniff` command */
 #include "air_safety.h"    /* g_air_safety / AirSafety_Reset() for `safety` + the `stats` AIR line */
+#include "events.h"        /* the #E event recorder for the `events` command */
 #include "main.h"          /* HAL_GetTick() */
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>       /* strtoul() for `telem rate` */
+
+/* Release name for `version`. Bump by hand when you want to name a build; the
+ * build date/time printed beside it is stamped by the compiler, so forgetting
+ * to bump this loses you a label, never the truth about what is on the board. */
+#define HCU_FW_VERSION  "2.4.0"
 
 /* ------------------------------------------------------------------ */
 /* Line buffer                                                        */
@@ -193,6 +199,165 @@ static void cmd_stats(void)
                    g_air_safety.air_closed ? "closed" : "open",
                    g_air_safety.pre_closed ? "closed" : "open",
                    (unsigned long)g_air_safety.stall_trips);
+
+    /* ---- loop headroom ----
+     * overruns tells you the loop has ALREADY missed a deadline. These numbers
+     * tell you how close you are to missing one, which is the question you
+     * actually want answered before a session. Budget is 10000 us per tick:
+     *   step  how long Model_Step() takes
+     *   late  how long after the hardware tick the step actually started */
+    const sched_timing_t *T = &g_sched_timing;
+    if (T->samples > 0u) {
+        Console_Printf(" step    %lu us now  min %lu  avg %lu  max %lu  (budget %lu)\r\n",
+                       (unsigned long)T->step_us_last,
+                       (unsigned long)T->step_us_min,
+                       (unsigned long)(T->step_us_sum / T->samples),
+                       (unsigned long)T->step_us_max,
+                       (unsigned long)(1000000u / SCHED_RATE_HZ));
+        Console_Printf(" late    %lu us now  min %lu  avg %lu  max %lu  over %lu steps\r\n",
+                       (unsigned long)T->lat_us_last,
+                       (unsigned long)T->lat_us_min,
+                       (unsigned long)(T->lat_us_sum / T->samples),
+                       (unsigned long)T->lat_us_max,
+                       (unsigned long)T->samples);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* `stats json` - the same health data, machine-readable                */
+/* ------------------------------------------------------------------ */
+/*
+ * One JSON object on one line. The GUI's Health tab reads this instead of
+ * scraping the human text above, so a cosmetic tweak to the readable version
+ * can never break the dashboard - and it is what an AI gets handed when you
+ * export a debug bundle.
+ *
+ * Emitted in several Console_Printf chunks because the shared TX buffer is
+ * small; they concatenate into one line on the host because nothing else
+ * writes to the console between them (single-threaded superloop).
+ */
+static void cmd_stats_json(void)
+{
+    can_health_t h1, h2;
+    Can_Health(1u, &h1);
+    Can_Health(2u, &h2);
+    const sched_timing_t *T = &g_sched_timing;
+    uint32_t samples = (T->samples > 0u) ? T->samples : 1u;
+
+    Console_Printf("#J {\"uptime_ms\":%lu,\"ticks\":%lu,\"overruns\":%lu",
+                   (unsigned long)HAL_GetTick(),
+                   (unsigned long)g_sched_ticks,
+                   (unsigned long)g_sched_overruns);
+
+    Console_Printf(",\"step_us\":{\"last\":%lu,\"min\":%lu,\"avg\":%lu,\"max\":%lu}",
+                   (unsigned long)T->step_us_last,
+                   (unsigned long)T->step_us_min,
+                   (unsigned long)(T->step_us_sum / samples),
+                   (unsigned long)T->step_us_max);
+    Console_Printf(",\"late_us\":{\"last\":%lu,\"min\":%lu,\"avg\":%lu,\"max\":%lu}",
+                   (unsigned long)T->lat_us_last,
+                   (unsigned long)T->lat_us_min,
+                   (unsigned long)(T->lat_us_sum / samples),
+                   (unsigned long)T->lat_us_max);
+    Console_Printf(",\"step_budget_us\":%lu,\"step_samples\":%lu",
+                   (unsigned long)(1000000u / SCHED_RATE_HZ),
+                   (unsigned long)T->samples);
+
+    Console_Print(",\"step_hist\":[");
+    for (uint32_t b = 0u; b < SCHED_HIST_BUCKETS; b++) {
+        Console_Printf("%s%lu", b ? "," : "", (unsigned long)T->hist[b]);
+    }
+    Console_Print("],\"step_hist_edges_us\":[");
+    for (uint32_t b = 0u; b < SCHED_HIST_BUCKETS; b++) {
+        /* The last bucket is "and over"; report it as the budget so the GUI can
+         * label it without knowing about UINT32_MAX. */
+        unsigned long e = (b + 1u == SCHED_HIST_BUCKETS)
+                        ? (unsigned long)(1000000u / SCHED_RATE_HZ)
+                        : (unsigned long)g_sched_hist_edges[b];
+        Console_Printf("%s%lu", b ? "," : "", e);
+    }
+    Console_Print("]");
+
+    Console_Printf(",\"can1\":{\"bus_off\":%u,\"gave_up\":%u,\"err_passive\":%u,\"tec\":%u,"
+                   "\"lec\":%u,\"tx_pending\":%u,\"rx_lost\":%lu,\"recoveries\":%lu,"
+                   "\"tx_done\":%lu,\"tx_fail\":%lu}",
+                   (unsigned)h1.bus_off, (unsigned)h1.recovery_gave_up,
+                   (unsigned)h1.error_passive, (unsigned)h1.tx_err_cnt,
+                   (unsigned)h1.last_err_code, (unsigned)h1.tx_pending,
+                   (unsigned long)g_can_stats.bus1_rx_lost,
+                   (unsigned long)g_can_stats.bus1_recoveries,
+                   (unsigned long)g_can_stats.bus1_tx_done,
+                   (unsigned long)g_can_stats.bus1_tx_fail);
+
+    Console_Printf(",\"can2\":{\"bus_off\":%u,\"gave_up\":%u,\"err_passive\":%u,\"tec\":%u,"
+                   "\"lec\":%u,\"tx_pending\":%u,\"rx_lost\":%lu,\"recoveries\":%lu,"
+                   "\"tx_done\":%lu,\"tx_fail\":%lu}",
+                   (unsigned)h2.bus_off, (unsigned)h2.recovery_gave_up,
+                   (unsigned)h2.error_passive, (unsigned)h2.tx_err_cnt,
+                   (unsigned)h2.last_err_code, (unsigned)h2.tx_pending,
+                   (unsigned long)g_can_stats.bus2_rx_lost,
+                   (unsigned long)g_can_stats.bus2_recoveries,
+                   (unsigned long)g_can_stats.bus2_tx_done,
+                   (unsigned long)g_can_stats.bus2_tx_fail);
+
+    Console_Printf(",\"log\":{\"writes\":%lu,\"drops\":%lu,\"ring\":%lu,\"ring_max\":%u,"
+                   "\"peak\":%u}",
+                   (unsigned long)g_log_stats.writes,
+                   (unsigned long)g_log_stats.drops,
+                   (unsigned long)Log_Occupancy(),
+                   (unsigned)HCU_LOG_RING_RECORDS,
+                   (unsigned)g_log_stats.occ_max);
+
+    Console_Printf(",\"air\":{\"alive\":%u,\"armed\":%u,\"latched\":%u,\"air_closed\":%u,"
+                   "\"pre_closed\":%u,\"stall_age\":%lu,\"trips\":%lu,\"calls\":%lu}",
+                   (unsigned)g_air_safety.model_alive,
+                   (unsigned)g_air_safety.armed,
+                   (unsigned)g_air_safety.stall_latched,
+                   (unsigned)g_air_safety.air_closed,
+                   (unsigned)g_air_safety.pre_closed,
+                   (unsigned long)g_air_safety.stall_age_ticks,
+                   (unsigned long)g_air_safety.stall_trips,
+                   (unsigned long)g_air_safety.supervise_calls);
+
+    Console_Printf(",\"telem\":{\"on\":%u,\"rate\":%lu,\"signals\":%lu}",
+                   (unsigned)Telem_IsStreaming(),
+                   (unsigned long)Telem_GetRateHz(),
+                   (unsigned long)Telem_Count());
+
+    Console_Printf(",\"events\":{\"on\":%u,\"watched\":%lu,\"raised\":%lu}}\r\n",
+                   (unsigned)Events_IsStreaming(),
+                   (unsigned long)Events_Watched(),
+                   (unsigned long)Events_Count());
+}
+
+/* ------------------------------------------------------------------ */
+/* `version` - the board's fingerprint                                  */
+/* ------------------------------------------------------------------ */
+/*
+ * What firmware is on this board, and what shape is it? Printed into every
+ * exported debug bundle, so a log can always be tied back to the build that
+ * produced it. The counts are compile-time facts about the .def files, which is
+ * what actually determines whether a saved tune or an old log still matches:
+ * params_layout differing from a saved tune's means that tune was captured from
+ * a different params.def and must not be applied blind.
+ *
+ * Build stamp comes from the compiler (__DATE__/__TIME__), so it is always
+ * truthful with no build-system step to forget. HCU_FW_VERSION is the one thing
+ * you bump by hand, when you want to name a release.
+ */
+static void cmd_version(void)
+{
+    Console_Printf("HCU V2 firmware %s\r\n", HCU_FW_VERSION);
+    Console_Printf(" built      %s %s\r\n", __DATE__, __TIME__);
+    Console_Printf(" core       CM7  model step %lu Hz\r\n",
+                   (unsigned long)SCHED_RATE_HZ);
+    Console_Printf(" params     %lu  (layout %08lX)\r\n",
+                   (unsigned long)Params_Count(),
+                   (unsigned long)Params_LayoutId());
+    Console_Printf(" telem      %lu signals\r\n", (unsigned long)Telem_Count());
+    Console_Printf(" events     %lu watched\r\n", (unsigned long)Events_Watched());
+    Console_Printf(" can slots  bus1 %u  bus2 %u\r\n",
+                   (unsigned)CAN1_MSG_COUNT, (unsigned)CAN2_MSG_COUNT);
 }
 
 /* ------------------------------------------------------------------ */
@@ -212,7 +377,9 @@ static void process_line(char *s)
                       "  defaults         reset to built-in defaults (RAM)\r\n"
                       "  time             show RTC wall-clock\r\n"
                       "  time set <d> <t> set clock: YYYY-MM-DD HH:MM:SS\r\n"
+                      "  version          firmware build + .def fingerprints\r\n"
                       "  stats            system health (loop, CAN, logging, AIR)\r\n"
+                      "  stats json       the same health data, machine-readable\r\n"
                       "  stats clear      zero the stats counters\r\n"
                       "  safety           independent AIR fail-safe state\r\n"
                       "  safety reset     clear a stall latch (stationary; healthy only)\r\n"
@@ -226,19 +393,25 @@ static void process_line(char *s)
                       "  cansniff clear   forget all captured ids\r\n"
                       "  cansniff list    dump the captured id table once\r\n"
                       "  canreg           dump FDCAN TX registers (tx debug)\r\n"
+                      "  events           event-recorder status (#E change stream)\r\n"
+                      "  events on|off    start/stop emitting #E lines\r\n"
+                      "  events list      re-emit the stored recent events\r\n"
+                      "  events clear     forget the stored events\r\n"
                       "  ping             link check\r\n");
 
     } else if (strcmp(cmd, "stats") == 0) {
         char *sub = strtok(NULL, " ");
         if (!sub) {
             cmd_stats();
+        } else if (strcmp(sub, "json") == 0) {
+            cmd_stats_json();
         } else if (strcmp(sub, "clear") == 0) {
             Sched_ClearStats();
             Can_ClearStats();
             Log_ClearStats();
             Console_Print("stats cleared\r\n");
         } else {
-            Console_Print("usage: stats | stats clear\r\n");
+            Console_Print("usage: stats | stats json | stats clear\r\n");
         }
 
     } else if (strcmp(cmd, "safety") == 0) {
@@ -312,6 +485,28 @@ static void process_line(char *s)
 
     } else if (strcmp(cmd, "canreg") == 0) {
         Can_DumpTx();
+
+    } else if (strcmp(cmd, "version") == 0) {
+        cmd_version();
+
+    } else if (strcmp(cmd, "events") == 0) {
+        char *sub = strtok(NULL, " ");
+        if (!sub) {
+            Events_PrintStatus();
+        } else if (strcmp(sub, "on") == 0) {
+            Events_SetStreaming(1);
+            Events_PrintStatus();
+        } else if (strcmp(sub, "off") == 0) {
+            Events_SetStreaming(0);
+            Events_PrintStatus();
+        } else if (strcmp(sub, "list") == 0) {
+            Events_PrintHistory();
+        } else if (strcmp(sub, "clear") == 0) {
+            Events_Clear();
+            Console_Print("events cleared\r\n");
+        } else {
+            Console_Print("usage: events | events on|off | events list | events clear\r\n");
+        }
 
     } else if (strcmp(cmd, "ping") == 0) {
         Console_Print("pong\r\n");

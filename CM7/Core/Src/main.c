@@ -34,6 +34,7 @@
 #include "logger.h"
 #include "clock.h"
 #include "telem.h"
+#include "events.h"
 #include "air_safety.h"
 /* USER CODE END Includes */
 
@@ -189,6 +190,7 @@ while((__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) == RESET) && (timeout-- > 0));
   Log_Init();        /* set up the CM4 SD-log ring before the first Model_Step writes to it */
   Clock_Init();      /* seed RTC from build time + publish datetime to the IPC (after Log_Init) */
   Telem_Init();      /* live USB telemetry stream (off until `telem on`) */
+  Events_Init();     /* event recorder: seed the watched signals before the first step */
   AirSafety_Init();  /* independent AIR fail-safe: force both sinks open, clear the latch (MUST precede Sched_Init - the TIM6 ISR drives it) */
   Sched_Init();      /* start the 100 Hz model-step time base (TIM6) - must be last */
   /* USER CODE END 2 */
@@ -215,6 +217,8 @@ while((__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) == RESET) && (timeout-- > 0));
 
 	if (Sched_StepDue()) {           /* exact 100 Hz tick from TIM6 (see scheduler.h) */
 		Model_Step();
+		Sched_StepDone();            /* stop the step stopwatch (loop-headroom stats) */
+		Events_Poll();               /* emit #E for any discrete signal that just changed */
 	}
 
   }

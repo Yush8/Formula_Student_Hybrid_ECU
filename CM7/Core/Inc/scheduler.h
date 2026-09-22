@@ -55,8 +55,57 @@ void Sched_Init(void);
  * behind), it returns true ONCE and counts the skipped ticks as overruns. It
  * never fires Model_Step() back-to-back to "catch up" - bursting steps would
  * compress time and is wrong for a control loop.
+ *
+ * On the true branch it also starts the step stopwatch and records how late we
+ * were to the tick (see Sched_StepDone and sched_timing_t below).
  */
 bool Sched_StepDue(void);
+
+/*
+ * Call immediately AFTER Model_Step(). Stops the stopwatch and folds the result
+ * into g_sched_timing. Pairing is what makes the numbers mean anything, so keep
+ * these two wrapped tightly around the step:
+ *
+ *     if (Sched_StepDue()) { Model_Step(); Sched_StepDone(); }
+ */
+void Sched_StepDone(void);
+
+/*
+ * How hard the 100 Hz loop is actually working - the difference between "we have
+ * not missed a deadline yet" and "we are nowhere near missing one".
+ *
+ *   step_us     how long Model_Step() itself took.
+ *   latency_us  how long after the TIM6 tick edge the step actually STARTED.
+ *               This is the jitter that matters: the tick is hardware and never
+ *               drifts, but the superloop only notices it between other jobs, so
+ *               a slow Console_Poll or telemetry frame shows up here.
+ *
+ * Budget is 10000 us per tick (SCHED_RATE_HZ). step_us + latency_us staying well
+ * under that is the real headroom figure; g_sched_overruns only tells you after
+ * you have already run out. The histogram buckets step_us so an occasional long
+ * step is visible even though the mean looks fine.
+ *
+ * Diagnostics only - never fed to the model, same policy as g_can_stats.
+ */
+#define SCHED_HIST_BUCKETS  8u
+
+typedef struct {
+    uint32_t samples;             /* steps measured since boot / stats clear  */
+    uint32_t step_us_last;
+    uint32_t step_us_min;
+    uint32_t step_us_max;
+    uint64_t step_us_sum;         /* /samples = mean                          */
+    uint32_t lat_us_last;
+    uint32_t lat_us_min;
+    uint32_t lat_us_max;
+    uint64_t lat_us_sum;
+    uint32_t hist[SCHED_HIST_BUCKETS];  /* step_us distribution, see the edges */
+} sched_timing_t;
+
+extern sched_timing_t g_sched_timing;
+
+/* Upper edge (us, inclusive) of each histogram bucket; the last is "and over". */
+extern const uint32_t g_sched_hist_edges[SCHED_HIST_BUCKETS];
 
 /*
  * Diagnostics - for the debugger / future `stat` console command only.
@@ -66,10 +115,10 @@ bool Sched_StepDue(void);
 extern uint32_t          g_sched_overruns;   /* missed model-step deadlines since boot */
 extern volatile uint32_t g_sched_ticks;      /* total ticks generated since boot       */
 
-/* Zero the overrun counter (for the `stats clear` console command). Deliberately
- * leaves g_sched_ticks and the internal serviced count alone: those two track
- * the live time base, and zeroing only one of them would desync the pair and
- * fabricate a huge overrun on the next step. */
+/* Zero the overrun counter and the timing statistics (for the `stats clear`
+ * console command). Deliberately leaves g_sched_ticks and the internal serviced
+ * count alone: those two track the live time base, and zeroing only one of them
+ * would desync the pair and fabricate a huge overrun on the next step. */
 void Sched_ClearStats(void);
 
 #endif /* SCHEDULER_H */
